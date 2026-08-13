@@ -1,0 +1,8 @@
+---
+dev_vms_user: "{{ ansible_user_id }}"
+dev_vms_image_name: debian-13-genericcloud-amd64.qcow2
+dev_vms_image_url: https://cloud.debian.org/images/cloud/trixie/latest/{{ dev_vms_image_name }}
+dev_vms_checksum_url: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
+dev_vms_template_dir: /var/lib/libvirt/images/templates
+dev_vms_pool_dir: /var/lib/libvirt/images/dev-vms
+dev_vms_ssh_key: "{{ ansible_env.HOME }}/.ssh/dev-vm"

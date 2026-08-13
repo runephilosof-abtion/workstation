@@ -1,0 +1,106 @@
+---
+- name: Install virtualization packages
+  ansible.builtin.apt:
+    name:
+      - qemu-system-x86
+      - qemu-utils
+      - libvirt-daemon-system
+      - libvirt-clients
+      - virtinst
+      - cloud-image-utils
+    state: present
+  become: true
+
+- name: Add user to virtualization groups
+  ansible.builtin.user:
+    name: "{{ dev_vms_user }}"
+    groups:
+      - kvm
+      - libvirt
+    append: true
+  become: true
+
+- name: Enable and start libvirtd
+  ansible.builtin.systemd_service:
+    name: libvirtd
+    state: started
+    enabled: true
+  become: true
+
+- name: Read default libvirt network state
+  ansible.builtin.command: virsh net-info default
+  register: dev_vms_net_info
+  changed_when: false
+  become: true
+
+- name: Autostart the default libvirt network
+  ansible.builtin.command: virsh net-autostart default
+  when: dev_vms_net_info.stdout is not search('Autostart:\s+yes')
+  become: true
+
+- name: Start the default libvirt network
+  ansible.builtin.command: virsh net-start default
+  when: dev_vms_net_info.stdout is not search('Active:\s+yes')
+  become: true
+
+- name: Create template image directory
+  ansible.builtin.file:
+    path: "{{ dev_vms_template_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+# setgid + group-writable so vm-new/vm-dispose can manage overlays without sudo
+- name: Create VM pool directory
+  ansible.builtin.file:
+    path: "{{ dev_vms_pool_dir }}"
+    state: directory
+    owner: root
+    group: libvirt
+    mode: "2775"
+  become: true
+
+- name: Download Debian cloud template image
+  ansible.builtin.get_url:
+    url: "{{ dev_vms_image_url }}"
+    dest: "{{ dev_vms_template_dir }}/{{ dev_vms_image_name }}"
+    checksum: "sha512:{{ dev_vms_checksum_url }}"
+    mode: "0644"
+  become: true
+
+- name: Generate SSH key for dev VMs
+  ansible.builtin.command: ssh-keygen -t ed25519 -N "" -C dev-vms -f {{ dev_vms_ssh_key }}
+  args:
+    creates: "{{ dev_vms_ssh_key }}"
+
+- name: Create user bin directory
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.local/bin"
+    state: directory
+    mode: "0755"
+
+- name: Install VM management scripts
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ ansible_env.HOME }}/.local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - vm-new
+    - vm-dispose
+    - vm-ip
+
+- name: Create SSH config fragment directory
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.ssh/dev-vms.d"
+    state: directory
+    mode: "0700"
+
+- name: Include dev VM entries in SSH config
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_env.HOME }}/.ssh/config"
+    line: Include dev-vms.d/*.conf
+    insertbefore: BOF
+    create: true
+    mode: "0600"

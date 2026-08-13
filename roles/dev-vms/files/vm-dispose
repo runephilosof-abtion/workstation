@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NAME=${1:?usage: vm-dispose <name>}
+CONNECT=qemu:///system
+POOL=/var/lib/libvirt/images/dev-vms
+
+virsh --connect "$CONNECT" destroy "$NAME" 2>/dev/null || true
+virsh --connect "$CONNECT" undefine "$NAME" --nvram 2>/dev/null || true
+rm -f "$POOL/$NAME.qcow2" "$POOL/$NAME-seed.iso"
+
+CONF=$HOME/.ssh/dev-vms.d/$NAME.conf
+if [[ -f $CONF ]]; then
+  IP=$(awk '/HostName/ { print $2 }' "$CONF")
+  [[ -n ${IP:-} ]] && ssh-keygen -R "$IP" > /dev/null 2>&1 || true
+  ssh-keygen -R "$NAME" > /dev/null 2>&1 || true
+  rm -f "$CONF"
+fi
+
+echo "VM '$NAME' disposed."
