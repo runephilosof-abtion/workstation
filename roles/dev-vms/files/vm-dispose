@@ -2,8 +2,8 @@
 set -euo pipefail
 
 NAME=${1:?usage: vm-dispose <name>}
-CONNECT=qemu:///system
-POOL=/var/lib/libvirt/images/dev-vms
+CONNECT=${VM_CONNECT:-qemu:///system}
+POOL=${VM_POOL:-/var/lib/libvirt/images/dev-vms}
 
 virsh --connect "$CONNECT" destroy "$NAME" 2>/dev/null || true
 virsh --connect "$CONNECT" undefine "$NAME" --nvram 2>/dev/null || true

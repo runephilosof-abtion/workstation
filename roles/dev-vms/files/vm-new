@@ -22,9 +22,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CONNECT=qemu:///system
-TEMPLATE=/var/lib/libvirt/images/templates/debian-13-genericcloud-amd64.qcow2
-POOL=/var/lib/libvirt/images/dev-vms
+CONNECT=${VM_CONNECT:-qemu:///system}
+TEMPLATE=${VM_TEMPLATE:-/var/lib/libvirt/images/templates/debian-13-genericcloud-amd64.qcow2}
+POOL=${VM_POOL:-/var/lib/libvirt/images/dev-vms}
 KEY=$HOME/.ssh/dev-vm
 NODE_MAJOR=${VM_NODE_MAJOR:-22}
 DISK_PATH=$POOL/$NAME.qcow2

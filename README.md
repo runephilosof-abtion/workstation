@@ -55,4 +55,5 @@ default 22).
 
 Paths (template dir, VM pool dir, SSH key) are defined in
 `roles/dev-vms/defaults/main.yml`; the scripts in `roles/dev-vms/files/`
-hard-code the same paths, so change both together.
+default to the same paths (overridable per-invocation via `VM_CONNECT`,
+`VM_TEMPLATE`, and `VM_POOL`), so change both together.
