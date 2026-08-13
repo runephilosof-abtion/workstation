@@ -58,14 +58,19 @@ runcmd:
 EOF
 cloud-localds "$SEED_PATH" "$WORK/user-data"
 
+# q35: the genericcloud image ships no IDE driver, so the seed cdrom must not
+# land on the i440fx default's IDE bus; q35 gives it SATA. UEFI: trixie amd64
+# cloud images no longer boot via BIOS.
 virt-install \
   --connect "$CONNECT" \
+  --machine q35 \
   --name "$NAME" \
   --memory "$MEM" \
   --vcpus "$VCPUS" \
   --disk "path=$DISK_PATH,format=qcow2,bus=virtio" \
   --disk "path=$SEED_PATH,device=cdrom" \
-  --osinfo debian12 \
+  --osinfo detect=on,require=off \
+  --boot uefi \
   --import \
   --network network=default,model=virtio \
   --graphics none \
