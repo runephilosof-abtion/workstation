@@ -8,8 +8,11 @@
       - libvirt-clients
       - virtinst
       - cloud-image-utils
+      # trixie amd64 cloud images are UEFI-only; vm-new boots with --boot uefi
+      - ovmf
     state: present
   become: true
+  tags: system
 
 - name: Add user to virtualization groups
   ansible.builtin.user:
@@ -19,6 +22,7 @@
       - libvirt
     append: true
   become: true
+  tags: system
 
 - name: Enable and start libvirtd
   ansible.builtin.systemd_service:
@@ -26,22 +30,26 @@
     state: started
     enabled: true
   become: true
+  tags: system
 
 - name: Read default libvirt network state
   ansible.builtin.command: virsh net-info default
   register: dev_vms_net_info
   changed_when: false
   become: true
+  tags: system
 
 - name: Autostart the default libvirt network
   ansible.builtin.command: virsh net-autostart default
   when: dev_vms_net_info.stdout is not search('Autostart:\s+yes')
   become: true
+  tags: system
 
 - name: Start the default libvirt network
   ansible.builtin.command: virsh net-start default
   when: dev_vms_net_info.stdout is not search('Active:\s+yes')
   become: true
+  tags: system
 
 - name: Create template image directory
   ansible.builtin.file:
@@ -51,6 +59,7 @@
     group: root
     mode: "0755"
   become: true
+  tags: system
 
 # setgid + group-writable so vm-new/vm-dispose can manage overlays without sudo
 - name: Create VM pool directory
@@ -61,6 +70,7 @@
     group: libvirt
     mode: "2775"
   become: true
+  tags: system
 
 - name: Download Debian cloud template image
   ansible.builtin.get_url:
@@ -69,17 +79,20 @@
     checksum: "sha512:{{ dev_vms_checksum_url }}"
     mode: "0644"
   become: true
+  tags: system
 
 - name: Generate SSH key for dev VMs
   ansible.builtin.command: ssh-keygen -t ed25519 -N "" -C dev-vms -f {{ dev_vms_ssh_key }}
   args:
     creates: "{{ dev_vms_ssh_key }}"
+  tags: user
 
 - name: Create user bin directory
   ansible.builtin.file:
     path: "{{ ansible_env.HOME }}/.local/bin"
     state: directory
     mode: "0755"
+  tags: user
 
 - name: Install VM management scripts
   ansible.builtin.copy:
@@ -90,12 +103,14 @@
     - vm-new
     - vm-dispose
     - vm-ip
+  tags: user
 
 - name: Create SSH config fragment directory
   ansible.builtin.file:
     path: "{{ ansible_env.HOME }}/.ssh/dev-vms.d"
     state: directory
     mode: "0700"
+  tags: user
 
 - name: Include dev VM entries in SSH config
   ansible.builtin.lineinfile:
@@ -104,3 +119,4 @@
     insertbefore: BOF
     create: true
     mode: "0600"
+  tags: user

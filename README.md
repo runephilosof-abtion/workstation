@@ -30,6 +30,15 @@ ansible-playbook site.yml -K
 Log out and back in once after the first run so the `libvirt` group
 membership takes effect.
 
+Tasks are tagged `system` (needs root) and `user`. Without a sudo password
+available (e.g. driven by an agent), the system half can run through a
+polkit GUI prompt instead:
+
+```sh
+pkexec ansible-playbook -i inventory.ini site.yml --tags system -e dev_vms_user=$USER
+ansible-playbook site.yml --tags user
+```
+
 ## Daily use
 
 ```sh
