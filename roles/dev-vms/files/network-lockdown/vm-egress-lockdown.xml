@@ -1,0 +1,78 @@
+<filter name='vm-egress-lockdown' chain='root'>
+  <uuid>72899272-b30b-482c-b909-7bf94fe76b94</uuid>
+  <filterref filter='clean-traffic'/>
+  <filterref filter='allow-dhcp'/>
+  <!-- allow-dhcp only covers initial broadcast DISCOVER (src 0.0.0.0 -> 255.255.255.255).
+       A client renewing an already-held lease sends a unicast REQUEST instead, which that
+       filter doesn't match — without this, DHCP renewal gets silently blocked and the VM
+       eventually loses its IP entirely (reproduced and confirmed while building this filter).
+       Cover DHCP client traffic broadly by port, any destination. -->
+  <rule action='accept' direction='out' priority='60'>
+    <udp srcportstart='68' dstportstart='67'/>
+  </rule>
+
+  <!-- Return traffic for connections initiated FROM OUTSIDE the guest (e.g. this SSH
+       session itself, host -> guest). Without this, nwfilter's direction='out' rules only
+       match freshly-initiated outbound connections, and the guest's own reply packets on an
+       inbound connection (source port 22, arbitrary destination port) match nothing below
+       and get dropped by the implicit default-deny — which breaks inbound SSH management.
+       This MUST stay first/lowest-priority. -->
+  <rule action='accept' direction='out' priority='50'>
+    <tcp state='ESTABLISHED,RELATED'/>
+  </rule>
+  <rule action='accept' direction='out' priority='50'>
+    <udp state='ESTABLISHED,RELATED'/>
+  </rule>
+  <rule action='accept' direction='out' priority='50'>
+    <icmp state='ESTABLISHED,RELATED'/>
+  </rule>
+
+  <!-- DNS to the libvirt gateway only -->
+  <rule action='accept' direction='out' priority='100'>
+    <udp dstportstart='53' dstipaddr='192.168.122.1'/>
+  </rule>
+  <rule action='accept' direction='out' priority='100'>
+    <tcp dstportstart='53' dstipaddr='192.168.122.1'/>
+  </rule>
+
+  <!-- Squid forward proxy on the host (192.168.122.1:3128), domain-allowlisted
+       (/etc/squid/allowed_domains.txt on the host). This is the ONLY way to reach the
+       internet over HTTP/HTTPS from either VM now — see below, the generic 80/443 accept
+       has been removed. A process that doesn't use this proxy (raw sockets, curl without
+       -x/http_proxy) cannot reach the internet on those ports at all, direct or otherwise. -->
+  <rule action='accept' direction='out' priority='100'>
+    <tcp dstportstart='3128' dstipaddr='192.168.122.1'/>
+  </rule>
+
+  <!-- Block all other traffic to the 192.168.122.0/24 segment (lateral movement between
+       VMs sharing virbr0). Must be lower priority number (evaluated earlier) than the
+       general port-based accepts below, or a generic accept would let it through. -->
+  <rule action='drop' direction='out' priority='200'>
+    <ip dstipaddr='192.168.122.0' dstipmask='255.255.255.0'/>
+  </rule>
+  <!-- Explicit icmp-specific block: the generic <ip> match above did not catch icmp echo
+       in testing (ping to a sibling VM got through even though TCP was correctly blocked),
+       so block it explicitly rather than relying on the protocol-agnostic <ip> rule. -->
+  <rule action='drop' direction='out' priority='200'>
+    <icmp dstipaddr='192.168.122.0' dstipmask='255.255.255.0'/>
+  </rule>
+
+  <!-- General allowlist for what's left (SSH, NTP, ICMP diagnostics). Direct 80/443 is
+       DELIBERATELY not here anymore — all HTTP/HTTPS must go through the proxy rule above.
+       This is what actually contains a compromised/malicious process now: even with root
+       inside the guest, a raw HTTP(S) call to an arbitrary destination has no route out. -->
+  <rule action='accept' direction='out' priority='300'>
+    <icmp/>
+  </rule>
+  <rule action='accept' direction='out' priority='300'>
+    <udp dstportstart='123'/>
+  </rule>
+  <rule action='accept' direction='out' priority='300'>
+    <tcp dstportstart='22'/>
+  </rule>
+
+  <!-- Default deny (redundant with nwfilter's implicit default-drop, kept explicit) -->
+  <rule action='drop' direction='out' priority='1000'>
+    <all/>
+  </rule>
+</filter>

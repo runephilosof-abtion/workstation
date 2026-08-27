@@ -1,0 +1,12 @@
+.debian.org
+.nodesource.com
+.github.com
+.githubusercontent.com
+.githubcopilot.com
+.visualstudio.com
+.vscode-cdn.net
+.vscode.dev
+vscode-redirect.azurewebsites.net
+.anthropic.com
+.claude.com
+.exp-tas.com

@@ -1,0 +1,80 @@
+---
+# Host-enforced egress containment for dev VMs.
+#
+# Threat model addition: an agent inside a dev VM may run arbitrary hostile code and get
+# root. Anything enforced only *inside* the guest (its own nftables, iptables, etc.) can be
+# disabled by that root. This makes the host itself — which the guest cannot see or modify —
+# the actual enforcement point for "what can this VM reach on the network," via two pieces:
+#
+# 1. A libvirt nwfilter (`vm-egress-lockdown`) attached to every VM's network interface,
+#    enforced by libvirtd on the tap device itself. Default-denies egress except DNS to the
+#    gateway, NTP, SSH, and HTTP/HTTPS routed through (2).
+# 2. A squid forward proxy on the host (192.168.122.1:3128), domain-allowlisted. The nwfilter
+#    above only allows reaching the internet on 80/443 via this proxy — direct access is
+#    blocked, so VM tooling (apt, VS Code tunnel, Copilot, etc.) must be proxy-configured.
+#
+# See allowed_domains.txt for the current allowlist; add to it as new legitimate destinations
+# come up (check squid's access log for denied CONNECTs from a VM's IP to find what's missing).
+
+- name: Install squid
+  ansible.builtin.apt:
+    name: squid
+    state: present
+  become: true
+  tags: system
+
+- name: Deploy squid domain allowlist
+  ansible.builtin.copy:
+    src: network-lockdown/allowed_domains.txt
+    dest: /etc/squid/allowed_domains.txt
+    mode: "0644"
+  become: true
+  register: dev_vms_squid_domains
+  tags: system
+
+- name: Deploy squid ACL config
+  ansible.builtin.copy:
+    src: network-lockdown/squid-vm-allowlist.conf
+    dest: /etc/squid/conf.d/vm-allowlist.conf
+    mode: "0644"
+  become: true
+  register: dev_vms_squid_conf
+  tags: system
+
+- name: Enable and start squid
+  ansible.builtin.systemd_service:
+    name: squid
+    state: started
+    enabled: true
+  become: true
+  tags: system
+
+- name: Restart squid if config changed
+  ansible.builtin.systemd_service:
+    name: squid
+    state: restarted
+  become: true
+  when: dev_vms_squid_domains.changed or dev_vms_squid_conf.changed
+  tags: system
+
+# The libvirt "default" network runs its own firewalld zone that default-denies anything
+# not explicitly listed (dhcp/dhcpv6/dns/ssh/tftp) — squid's port needs to be added to it or
+# VMs cannot reach the proxy at all, independent of anything nwfilter-related.
+- name: Open squid port in the libvirt firewalld zone
+  ansible.builtin.command: firewall-cmd --zone=libvirt --add-port=3128/tcp --permanent
+  register: dev_vms_fw_port
+  changed_when: "'ALREADY_ENABLED' not in dev_vms_fw_port.stderr"
+  become: true
+  tags: system
+
+- name: Reload firewalld if the zone changed
+  ansible.builtin.command: firewall-cmd --reload
+  become: true
+  when: dev_vms_fw_port.changed
+  tags: system
+
+- name: Define the vm-egress-lockdown nwfilter
+  ansible.builtin.command:
+    cmd: virsh -c qemu:///system nwfilter-define {{ role_path }}/files/network-lockdown/vm-egress-lockdown.xml
+  changed_when: true
+  tags: user

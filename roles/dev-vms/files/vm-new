@@ -46,6 +46,22 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - $(cat "$KEY.pub")
+# The nwfilter attached below blocks direct internet HTTP/HTTPS — everything must go through
+# the host's squid proxy instead. write_files runs before package_update/packages/runcmd, so
+# apt (and the nodesource curl step) can already reach it.
+write_files:
+  - path: /etc/apt/apt.conf.d/95proxy
+    content: |
+      Acquire::http::Proxy "http://192.168.122.1:3128";
+      Acquire::https::Proxy "http://192.168.122.1:3128";
+  - path: /etc/environment
+    append: true
+    content: |
+      http_proxy=http://192.168.122.1:3128
+      https_proxy=http://192.168.122.1:3128
+      HTTP_PROXY=http://192.168.122.1:3128
+      HTTPS_PROXY=http://192.168.122.1:3128
+      no_proxy=localhost,127.0.0.1
 package_update: true
 packages:
   - git
@@ -53,6 +69,7 @@ packages:
   - ca-certificates
   - build-essential
 runcmd:
+  - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
   - apt-get install -y nodejs
 EOF
@@ -72,7 +89,7 @@ virt-install \
   --osinfo detect=on,require=off \
   --boot uefi \
   --import \
-  --network network=default,model=virtio \
+  --network network=default,model=virtio,filterref.filter=vm-egress-lockdown \
   --graphics none \
   --noautoconsole
 

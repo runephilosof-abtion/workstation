@@ -120,3 +120,6 @@
     create: true
     mode: "0600"
   tags: user
+
+- name: Host-enforced network containment for dev VMs
+  ansible.builtin.import_tasks: network-lockdown.yml

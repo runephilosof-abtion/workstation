@@ -7,16 +7,57 @@ of a shared-kernel container.
 
 ## Threat model
 
-An agent inside a project VM may run arbitrary hostile code. Containment comes
-from:
+An agent inside a project VM may run arbitrary hostile code, and may get root
+inside that VM. Containment comes from:
 
 - a separate guest kernel (KVM), not Linux namespaces
 - **no shared filesystem** — the repo is cloned *inside* the VM; work comes
   back to the host only through git, where you review the diff before merging
 - a dedicated SSH keypair (`~/.ssh/dev-vm`) used only toward dev VMs
+- **host-enforced network egress**, independent of anything running inside
+  the guest — see below
 
 The host-side `git` never executes anything the VM wrote: hooks and config
 changes arrive as reviewable diff, not as live files.
+
+### Network egress
+
+Anything enforced only *inside* a VM (its own nftables, iptables, a UID that's
+"supposed to" have no network access) can be disabled by root inside that VM —
+which is exactly the privilege level a hostile process might reach. So the
+real enforcement point is the **host**, which the guest can't see or modify:
+
+- Every VM's network interface carries a libvirt `nwfilter`
+  (`vm-egress-lockdown`, defined in `roles/dev-vms/files/network-lockdown/`),
+  attached automatically by `vm-new`. It default-denies egress except DNS to
+  the gateway, NTP, SSH, and HTTP/HTTPS — and HTTP/HTTPS only to a squid proxy
+  on the host (`192.168.122.1:3128`), not directly to the internet. It also
+  blocks all traffic between VMs on the same libvirt network (no lateral
+  movement from one project VM to another).
+- Squid is domain-allowlisted (`roles/dev-vms/files/network-lockdown/allowed_domains.txt`)
+  — apt, GitHub/Copilot, VS Code, Anthropic, etc. Add a domain there and
+  re-run the playbook (`--tags system`) when new legitimate tooling needs
+  reaching. Check `sudo tail -f /var/log/squid/access.log` on the host for
+  `TCP_DENIED` entries to find what a VM tried to reach that isn't allowed.
+- Inside a VM, `apt` and the shell environment are pre-configured
+  (`http_proxy`/`https_proxy` in `/etc/environment`, `/etc/apt/apt.conf.d/95proxy`)
+  to use that proxy — this is set up by `vm-new`'s cloud-init, not by the
+  nwfilter, so a VM created before this existed needs it added by hand.
+- **This is a backstop, not a substitute for per-project containment.** A
+  project running something like a web server as its own dedicated low-priv
+  system user (see `example-project`'s `vm-notes/` for a worked
+  example: a `wpsrv` user with zero network access at the guest level, since
+  the host can't tell WordPress's traffic apart from your own shell's by IP
+  alone) still needs that set up inside the VM itself. The host layer catches
+  what guest-level containment misses or has disabled; it can't replicate a
+  UID-based split it has no visibility into.
+
+Recovering a VM that's lost network reachability (e.g. after a live interface
+change) sometimes needs `virsh shutdown` + `virsh start` rather than
+`virsh reboot` (ACPI reboot isn't reliably handled by these images), or in
+the worst case editing the disk offline with `virt-customize`/`virt-copy-out`
+(`apt install libguestfs-tools`) while it's shut off. Avoid `virsh reset` —
+it's equivalent to pulling power and risks filesystem corruption.
 
 ## Fresh install bootstrap
 
