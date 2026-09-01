@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake virsh: records its argv (so tests can assert exactly what a script passed
+# it, e.g. that a domain name went through --domain rather than positionally),
+# and fakes just enough output/exit status for destroy/undefine/domifaddr to
+# drive vm-new/vm-dispose/vm-ip without a real libvirt.
+[[ -n ${STUB_LOG:-} ]] && printf 'virsh %s\n' "$*" >> "$STUB_LOG"
+
+sub=
+skip_next=0
+for a in "$@"; do
+  if [[ $skip_next == 1 ]]; then skip_next=0; continue; fi
+  if [[ $a == --connect ]]; then skip_next=1; continue; fi
+  sub=$a
+  break
+done
+
+case $sub in
+  destroy) exit "${STUB_VIRSH_DESTROY_EXIT:-0}" ;;
+  undefine) exit "${STUB_VIRSH_UNDEFINE_EXIT:-0}" ;;
+  domifaddr)
+    [[ -n ${STUB_DOMIFADDR_IP:-} ]] && printf ' vnet0      52:54:00:00:00:01    ipv4         %s/24\n' "$STUB_DOMIFADDR_IP"
+    exit "${STUB_VIRSH_DOMIFADDR_EXIT:-0}"
+    ;;
+  *) exit 0 ;;
+esac

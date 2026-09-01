@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake cloud-localds: just records its argv, no real seed ISO is created.
+[[ -n ${STUB_LOG:-} ]] && printf 'cloud-localds %s\n' "$*" >> "$STUB_LOG"
+exit 0

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Fake sleep: no-op, so vm-new's IP-polling retry loop runs at test speed.
+exit 0

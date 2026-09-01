@@ -102,8 +102,34 @@ default 22).
 - `site.yml` — entry point; add future roles (packages, dotfiles, …) here
 - `roles/dev-vms/` — virtualization packages, libvirt network, template image
   download, and the `vm-new`/`vm-dispose`/`vm-ip` scripts
+- `tests/` — test suite for those scripts (see below)
 
 Paths (template dir, VM pool dir, SSH key) are defined in
 `roles/dev-vms/defaults/main.yml`; the scripts in `roles/dev-vms/files/`
 default to the same paths (overridable per-invocation via `VM_CONNECT`,
 `VM_TEMPLATE`, and `VM_POOL`), so change both together.
+
+## Tests
+
+```sh
+tests/run.sh
+```
+
+Runs `tests/test_*.sh` against `vm-new`/`vm-dispose`/`vm-ip` with a stubbed
+`virsh`/`qemu-img`/`cloud-localds`/`virt-install`/`ssh-keygen`
+(`tests/fixtures/bin/`, put first on `PATH`) — no libvirt, KVM, or network
+needed, and the real `qemu:///system` connection and `~/.ssh/known_hosts` are
+never touched. Each stub logs its argv to `$STUB_LOG` so tests can assert
+exactly what a script passed it (e.g. that a domain name goes through
+`--domain` rather than positionally, where virsh would parse a flag-like name
+as its own option instead of a domain).
+
+```sh
+tests/run-in-vm.sh
+```
+
+Runs the same suite inside a throwaway dev VM instead, for extra assurance
+before trusting a change to the stubs themselves — the guest has no real
+virsh/qemu-img to fall through to and no `~/.ssh/known_hosts` of its own to
+lose. Slower (a couple of minutes, for VM boot) than `tests/run.sh`
+(under a second), which stays the one to run while iterating.

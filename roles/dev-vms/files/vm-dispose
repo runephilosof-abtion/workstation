@@ -5,7 +5,9 @@ NAME=${1:?usage: vm-dispose <name>}
 CONNECT=${VM_CONNECT:-qemu:///system}
 POOL=${VM_POOL:-/var/lib/libvirt/images/dev-vms}
 
-virsh --connect "$CONNECT" destroy --domain "$NAME" 2>/dev/null || true
+# --remove-logs: /var/log/libvirt/qemu/$NAME.log is root-owned; only libvirtd (via this
+# still-running destroy) can remove it without sudo. A no-op if the VM was already shut off.
+virsh --connect "$CONNECT" destroy --domain "$NAME" --remove-logs 2>/dev/null || true
 virsh --connect "$CONNECT" undefine --domain "$NAME" --nvram 2>/dev/null || true
 rm -f "$POOL/$NAME.qcow2" "$POOL/$NAME-seed.iso"
 

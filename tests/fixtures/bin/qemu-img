@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake qemu-img: just records its argv, no real image is created.
+[[ -n ${STUB_LOG:-} ]] && printf 'qemu-img %s\n' "$*" >> "$STUB_LOG"
+exit 0

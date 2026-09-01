@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Fake ssh-keygen: records its argv. Real ssh-keygen resolves ~/.ssh/known_hosts
+# via the passwd database, not $HOME, so it can't be sandboxed by env alone —
+# it must be stubbed to keep tests from touching the real user's known_hosts.
+[[ -n ${STUB_LOG:-} ]] && printf 'ssh-keygen %s\n' "$*" >> "$STUB_LOG"
+exit 0

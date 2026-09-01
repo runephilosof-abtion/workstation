@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake virt-install: just records its argv, no real domain is defined.
+[[ -n ${STUB_LOG:-} ]] && printf 'virt-install %s\n' "$*" >> "$STUB_LOG"
+exit 0
