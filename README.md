@@ -85,6 +85,7 @@ ansible-playbook site.yml --tags user
 ```sh
 vm-new myproject              # create a VM (options: --mem MB --vcpus N --disk SIZE)
 ssh myproject                 # or connect VSCode via Remote-SSH to host "myproject"
+vm-list                         # show every dev VM, its state, and its IP if running
 vm-ip myproject               # refresh the SSH config entry if the DHCP lease changed
 vm-dispose myproject          # destroy the VM and delete its disk
 ```
@@ -101,7 +102,7 @@ default 22).
 
 - `site.yml` — entry point; add future roles (packages, dotfiles, …) here
 - `roles/dev-vms/` — virtualization packages, libvirt network, template image
-  download, and the `vm-new`/`vm-dispose`/`vm-ip` scripts
+  download, and the `vm-new`/`vm-dispose`/`vm-ip`/`vm-list` scripts
 - `tests/` — test suite for those scripts (see below)
 
 Paths (template dir, VM pool dir, SSH key) are defined in
@@ -115,7 +116,7 @@ default to the same paths (overridable per-invocation via `VM_CONNECT`,
 tests/run.sh
 ```
 
-Runs `tests/test_*.sh` against `vm-new`/`vm-dispose`/`vm-ip` with a stubbed
+Runs `tests/test_*.sh` against `vm-new`/`vm-dispose`/`vm-ip`/`vm-list` with a stubbed
 `virsh`/`qemu-img`/`cloud-localds`/`virt-install`/`ssh-keygen`
 (`tests/fixtures/bin/`, put first on `PATH`) — no libvirt, KVM, or network
 needed, and the real `qemu:///system` connection and `~/.ssh/known_hosts` are

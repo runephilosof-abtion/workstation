@@ -1,25 +1,48 @@
 #!/usr/bin/env bash
 # Fake virsh: records its argv (so tests can assert exactly what a script passed
 # it, e.g. that a domain name went through --domain rather than positionally),
-# and fakes just enough output/exit status for destroy/undefine/domifaddr to
-# drive vm-new/vm-dispose/vm-ip without a real libvirt.
+# and fakes just enough output/exit status for destroy/undefine/domifaddr/domstate/list
+# to drive vm-new/vm-dispose/vm-ip/vm-list without a real libvirt.
 [[ -n ${STUB_LOG:-} ]] && printf 'virsh %s\n' "$*" >> "$STUB_LOG"
 
 sub=
-skip_next=0
+dom=
+prev=
 for a in "$@"; do
-  if [[ $skip_next == 1 ]]; then skip_next=0; continue; fi
-  if [[ $a == --connect ]]; then skip_next=1; continue; fi
-  sub=$a
-  break
+  if [[ -n $prev ]]; then
+    [[ $prev == --domain ]] && dom=$a
+    prev=
+    continue
+  fi
+  case $a in
+    --connect | --domain) prev=$a; continue ;;
+  esac
+  [[ -z $sub ]] && sub=$a
 done
+
+# Per-domain overrides (STUB_IP_<NAME>, STUB_STATE_<NAME>) let a single test stub
+# several VMs at once (e.g. vm-list showing one running, one shut off); domain names
+# are uppercased with non-alnum chars folded to '_' to make a valid var name.
+dom_upper=${dom^^}
+var_suffix=${dom_upper//[^A-Za-z0-9]/_}
 
 case $sub in
   destroy) exit "${STUB_VIRSH_DESTROY_EXIT:-0}" ;;
   undefine) exit "${STUB_VIRSH_UNDEFINE_EXIT:-0}" ;;
   domifaddr)
-    [[ -n ${STUB_DOMIFADDR_IP:-} ]] && printf ' vnet0      52:54:00:00:00:01    ipv4         %s/24\n' "$STUB_DOMIFADDR_IP"
+    ip_var="STUB_IP_${var_suffix}"
+    IP=${!ip_var:-${STUB_DOMIFADDR_IP:-}}
+    [[ -n $IP ]] && printf ' vnet0      52:54:00:00:00:01    ipv4         %s/24\n' "$IP"
     exit "${STUB_VIRSH_DOMIFADDR_EXIT:-0}"
+    ;;
+  domstate)
+    state_var="STUB_STATE_${var_suffix}"
+    printf '%s\n' "${!state_var:-${STUB_DOMSTATE:-shut off}}"
+    exit "${STUB_VIRSH_DOMSTATE_EXIT:-0}"
+    ;;
+  list)
+    [[ -n ${STUB_LIST_NAMES:-} ]] && printf '%s\n' "$STUB_LIST_NAMES"
+    exit "${STUB_VIRSH_LIST_EXIT:-0}"
     ;;
   *) exit 0 ;;
 esac
