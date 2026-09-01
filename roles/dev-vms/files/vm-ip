@@ -4,7 +4,7 @@ set -euo pipefail
 NAME=${1:?usage: vm-ip <name>}
 CONNECT=${VM_CONNECT:-qemu:///system}
 
-IP=$(virsh --connect "$CONNECT" domifaddr "$NAME" \
+IP=$(virsh --connect "$CONNECT" domifaddr --domain "$NAME" \
   | awk '/ipv4/ { sub("/.*", "", $4); print $4; exit }')
 [[ -n $IP ]] || { echo "No IP for '$NAME' (is it running?)" >&2; exit 1; }
 
