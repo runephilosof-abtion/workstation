@@ -134,3 +134,20 @@ before trusting a change to the stubs themselves — the guest has no real
 virsh/qemu-img to fall through to and no `~/.ssh/known_hosts` of its own to
 lose. Slower (a couple of minutes, for VM boot) than `tests/run.sh`
 (under a second), which stays the one to run while iterating.
+
+```sh
+tests/run-integration-in-vm.sh
+```
+
+Real, unstubbed integration test: provisions the actual dev-vms role (real
+libvirt/KVM, real squid+nwfilter) inside a *nested* throwaway VM
+(`vm-new --nested`, needing host CPU/kernel support for nested
+virtualization), then runs the real `vm-new`/`vm-dispose` against it —
+booting and disposing an actual inner VM, not stub argument shapes. The
+template image is seeded from the host's own cached copy (with a checksum
+computed from that same copy) rather than downloaded again, since the real
+download redirects to whichever Debian mirror it picks, which the squid
+allowlist can't practically enumerate in advance. Slow (10+ minutes: nested
+boot, full package install, an actual inner VM boot) and heavier (two levels
+of VM) — for validating real libvirt/virsh behavior before trusting a change
+to `vm-new`/`vm-dispose`/`vm-ip` themselves, not for routine iteration.

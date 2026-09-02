@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: vm-new <name> [--mem MB] [--vcpus N] [--disk SIZE]" >&2
+  echo "usage: vm-new <name> [--mem MB] [--vcpus N] [--disk SIZE] [--nested]" >&2
   exit 1
 }
 
@@ -13,11 +13,15 @@ shift
 MEM=8192
 VCPUS=4
 DISK=30G
+NESTED=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mem) MEM=$2; shift 2 ;;
     --vcpus) VCPUS=$2; shift 2 ;;
     --disk) DISK=$2; shift 2 ;;
+    # Exposes host VMX/SVM to the guest so it can run its own nested KVM guests
+    # (e.g. tests/run-integration-in-vm.sh, which needs a real libvirt inside).
+    --nested) NESTED=1; shift ;;
     *) usage ;;
   esac
 done
@@ -78,12 +82,15 @@ cloud-localds "$SEED_PATH" "$WORK/user-data"
 # q35: the genericcloud image ships no IDE driver, so the seed cdrom must not
 # land on the i440fx default's IDE bus; q35 gives it SATA. UEFI: trixie amd64
 # cloud images no longer boot via BIOS.
+CPU_ARGS=()
+[[ $NESTED == 1 ]] && CPU_ARGS=(--cpu host-passthrough)
 virt-install \
   --connect "$CONNECT" \
   --machine q35 \
   --name "$NAME" \
   --memory "$MEM" \
   --vcpus "$VCPUS" \
+  "${CPU_ARGS[@]}" \
   --disk "path=$DISK_PATH,format=qcow2,bus=virtio" \
   --disk "path=$SEED_PATH,device=cdrom" \
   --osinfo detect=on,require=off \

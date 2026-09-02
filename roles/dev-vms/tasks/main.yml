@@ -72,13 +72,40 @@
   become: true
   tags: system
 
+# get_url's own "checksum: sha512:URL" remote-fetch doesn't route that secondary request
+# through the environment below (verified: it 403s via a proxy even though the main download
+# right after it, given the same environment, succeeds) -- so the checksum file is fetched
+# and grepped explicitly instead, and only the resulting hash is passed to get_url.
+- name: Fetch Debian cloud image checksums
+  ansible.builtin.get_url:
+    url: "{{ dev_vms_checksum_url }}"
+    dest: /tmp/dev-vms-checksums.txt
+    mode: "0644"
+  become: true
+  # become drops the invoking user's http_proxy/https_proxy (e.g. set in /etc/environment
+  # by a dev VM's own cloud-init, when this role runs nested inside one) — re-supply them
+  # explicitly so the fetch isn't attempted direct, which the egress nwfilter blocks.
+  environment:
+    http_proxy: "{{ lookup('env', 'http_proxy') | default(omit, true) }}"
+    https_proxy: "{{ lookup('env', 'https_proxy') | default(omit, true) }}"
+  tags: system
+
+- name: Read the checksum for our image out of it
+  ansible.builtin.shell: "grep {{ dev_vms_image_name }} /tmp/dev-vms-checksums.txt | awk '{print $1}'"
+  register: dev_vms_image_checksum
+  changed_when: false
+  tags: system
+
 - name: Download Debian cloud template image
   ansible.builtin.get_url:
     url: "{{ dev_vms_image_url }}"
     dest: "{{ dev_vms_template_dir }}/{{ dev_vms_image_name }}"
-    checksum: "sha512:{{ dev_vms_checksum_url }}"
+    checksum: "sha512:{{ dev_vms_image_checksum.stdout }}"
     mode: "0644"
   become: true
+  environment:
+    http_proxy: "{{ lookup('env', 'http_proxy') | default(omit, true) }}"
+    https_proxy: "{{ lookup('env', 'https_proxy') | default(omit, true) }}"
   tags: system
 
 - name: Generate SSH key for dev VMs
