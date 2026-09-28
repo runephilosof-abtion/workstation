@@ -78,4 +78,67 @@ assert_eq "exits non-zero" 1 "$STATUS"
 assert_contains "reports the timeout" "$OUT" "Timed out waiting for an IP"
 teardown
 
+echo "vm-new: copies Claude Code credentials into cloud-init when present on host"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.21
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+mkdir -p "$HOME/.claude"
+echo '{"stub":"creds"}' > "$HOME/.claude/.credentials.json"
+OUT=$("$SCRIPT" claudevm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "writes the credentials file into the guest" "$USERDATA" "/home/dev/.claude/.credentials.json"
+assert_contains "owns it as the dev user" "$USERDATA" "owner: dev:dev"
+assert_contains "fixes up ~/.claude ownership afterwards" "$USERDATA" "chown -R dev:dev /home/dev/.claude"
+[[ -e $VM_POOL/claudevm-seed.iso ]] && PERMS=$(stat -c%a "$VM_POOL/claudevm-seed.iso") || PERMS=missing
+assert_eq "seed ISO is chmod 600 before libvirt touches it" "600" "$PERMS"
+teardown
+
+echo "vm-new: skips Claude credentials when none exist on host"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.22
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$("$SCRIPT" nocredsvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+assert_contains "warns that login will be manual" "$OUT" "login run manually"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_not_contains "never references a credentials file" "$USERDATA" ".claude/.credentials.json"
+teardown
+
+echo "vm-new: requires a GitHub token file when --repo is given"
+setup
+OUT=$("$SCRIPT" needstoken --repo org/repo 2>&1); STATUS=$?
+assert_eq "exits non-zero" 1 "$STATUS"
+assert_contains "explains how to create the scoped PAT" "$OUT" "fine-grained PAT"
+LOG=$(log_or_empty)
+assert_not_contains "never gets as far as creating a disk" "$LOG" "qemu-img"
+teardown
+
+echo "vm-new: clones the repo via a scoped GitHub PAT when --repo is given"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.23
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+TOKEN_FILE=$SANDBOX/repo.token
+echo "stub-pat-value" > "$TOKEN_FILE"
+OUT=$("$SCRIPT" repovm --repo git@github.com:acme/widgets.git --github-token-file "$TOKEN_FILE" 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "writes the PAT into the guest" "$USERDATA" "/home/dev/.github-token"
+assert_contains "installs the gh CLI" "$USERDATA" "apt-get install -y gh"
+assert_contains "logs gh in with the token, not a password" "$USERDATA" "gh auth login --with-token"
+assert_contains "clones the given repo" "$USERDATA" "gh repo clone git@github.com:acme/widgets.git /home/dev/work/widgets"
+assert_contains "removes the token file after use" "$USERDATA" "rm -f /home/dev/.github-token"
+teardown
+
+echo "vm-new: installs the Claude Code VS Code extension over Remote-SSH"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.24
+OUT=$("$SCRIPT" codevm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+LOG=$(cat "$STUB_LOG")
+assert_contains "targets the right ssh-remote alias" "$LOG" "--remote ssh-remote+codevm"
+assert_contains "installs the Claude Code extension id" "$LOG" "--install-extension anthropic.claude-code"
+assert_contains "reports success" "$OUT" "extension installed"
+teardown
+
 finish

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake VS Code CLI: records its argv, no real Remote-SSH connection is made.
+[[ -n ${STUB_LOG:-} ]] && printf 'code %s\n' "$*" >> "$STUB_LOG"
+exit "${STUB_CODE_EXIT:-0}"

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 # Fake cloud-localds: just records its argv, no real seed ISO is created.
+# When STUB_USERDATA is set, also copies the user-data file's content there
+# (its 2nd positional arg) so tests can assert on generated cloud-init content.
 [[ -n ${STUB_LOG:-} ]] && printf 'cloud-localds %s\n' "$*" >> "$STUB_LOG"
+[[ -n ${STUB_USERDATA:-} && -f $2 ]] && cp "$2" "$STUB_USERDATA"
+touch "$1"
 exit 0

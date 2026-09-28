@@ -10,3 +10,4 @@ vscode-redirect.azurewebsites.net
 .anthropic.com
 .claude.com
 .exp-tas.com
+.npmjs.org

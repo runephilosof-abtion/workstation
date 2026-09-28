@@ -3,6 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "usage: vm-new <name> [--mem MB] [--vcpus N] [--disk SIZE] [--nested]" >&2
+  echo "                     [--repo URL] [--github-token-file PATH]" >&2
   exit 1
 }
 
@@ -14,6 +15,8 @@ MEM=8192
 VCPUS=4
 DISK=30G
 NESTED=0
+REPO=
+TOKEN_FILE=
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mem) MEM=$2; shift 2 ;;
@@ -22,6 +25,10 @@ while [[ $# -gt 0 ]]; do
     # Exposes host VMX/SVM to the guest so it can run its own nested KVM guests
     # (e.g. tests/run-integration-in-vm.sh, which needs a real libvirt inside).
     --nested) NESTED=1; shift ;;
+    # Clone this repo on first boot via `gh repo clone`, authenticated with a
+    # fine-grained PAT scoped to just that repo (see README).
+    --repo) REPO=$2; shift 2 ;;
+    --github-token-file) TOKEN_FILE=$2; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -35,6 +42,30 @@ DISK_PATH=$POOL/$NAME.qcow2
 SEED_PATH=$POOL/$NAME-seed.iso
 
 [[ -e $DISK_PATH ]] && { echo "VM disk $DISK_PATH already exists" >&2; exit 1; }
+
+# Claude Code OAuth session copied from the host so the VM comes up already
+# logged in under your Claude.ai plan (not billed as separate API usage). This
+# puts that session token inside a VM meant to contain hostile code; treat it
+# as within this VM's blast radius, same as the GitHub PAT below.
+CLAUDE_CREDS_FILE=$HOME/.claude/.credentials.json
+[[ -f $CLAUDE_CREDS_FILE ]] || echo "note: no $CLAUDE_CREDS_FILE on host; Claude Code will need \`claude\` login run manually inside the VM" >&2
+
+GITHUB_TOKEN=
+REPO_DIR=
+if [[ -n $REPO ]]; then
+  TOKEN_FILE=${TOKEN_FILE:-$HOME/.config/dev-vms/tokens/$NAME.token}
+  if [[ ! -f $TOKEN_FILE ]]; then
+    echo "no GitHub token at $TOKEN_FILE" >&2
+    echo "create a fine-grained PAT scoped to just $REPO (github.com Settings >" >&2
+    echo "Developer settings > Fine-grained tokens, repository access: only" >&2
+    echo "$REPO, permission: Contents), then:" >&2
+    echo "  mkdir -p $(dirname "$TOKEN_FILE") && chmod 700 $(dirname "$TOKEN_FILE")" >&2
+    echo "  echo YOUR_TOKEN > $TOKEN_FILE && chmod 600 $TOKEN_FILE" >&2
+    exit 1
+  fi
+  GITHUB_TOKEN=$(<"$TOKEN_FILE")
+  REPO_DIR=$(basename "$REPO" .git)
+fi
 
 qemu-img create -q -f qcow2 -b "$TEMPLATE" -F qcow2 "$DISK_PATH" "$DISK"
 
@@ -66,6 +97,29 @@ write_files:
       HTTP_PROXY=http://192.168.122.1:3128
       HTTPS_PROXY=http://192.168.122.1:3128
       no_proxy=localhost,127.0.0.1
+EOF
+
+if [[ -f $CLAUDE_CREDS_FILE ]]; then
+  cat >> "$WORK/user-data" <<EOF
+  - path: /home/dev/.claude/.credentials.json
+    owner: dev:dev
+    permissions: '0600'
+    encoding: b64
+    content: $(base64 -w0 "$CLAUDE_CREDS_FILE")
+EOF
+fi
+
+if [[ -n $REPO ]]; then
+  cat >> "$WORK/user-data" <<EOF
+  - path: /home/dev/.github-token
+    owner: dev:dev
+    permissions: '0600'
+    encoding: b64
+    content: $(printf '%s' "$GITHUB_TOKEN" | base64 -w0)
+EOF
+fi
+
+cat >> "$WORK/user-data" <<EOF
 package_update: true
 packages:
   - git
@@ -76,8 +130,34 @@ runcmd:
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
   - apt-get install -y nodejs
+  - npm install -g @anthropic-ai/claude-code
 EOF
+
+[[ -f $CLAUDE_CREDS_FILE ]] && cat >> "$WORK/user-data" <<EOF
+  - chown -R dev:dev /home/dev/.claude
+  - chmod 700 /home/dev/.claude
+EOF
+
+if [[ -n $REPO ]]; then
+  cat >> "$WORK/user-data" <<EOF
+  - curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+  - chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+  - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+  - apt-get update
+  - apt-get install -y gh
+  - su - dev -c 'gh auth login --with-token < /home/dev/.github-token'
+  - su - dev -c 'gh auth setup-git'
+  - rm -f /home/dev/.github-token
+  - su - dev -c "gh repo clone $REPO /home/dev/work/$REPO_DIR"
+EOF
+fi
+
 cloud-localds "$SEED_PATH" "$WORK/user-data"
+# Best-effort: the seed ISO now carries copied secrets (Claude OAuth session,
+# GitHub PAT). libvirt's storage driver may re-chown/re-mode this on first use
+# (observed 0644 libvirt-qemu:libvirt-qemu on this host), so this isn't a firm
+# guarantee -- verify on a new host rather than relying on it.
+chmod 600 "$SEED_PATH"
 
 # q35: the genericcloud image ships no IDE driver, so the seed cdrom must not
 # land on the i440fx default's IDE bus; q35 gives it SATA. UEFI: trixie amd64
@@ -121,3 +201,24 @@ EOF
 
 echo "VM '$NAME' is up at $IP — connect with: ssh $NAME (or VSCode Remote-SSH)"
 echo "cloud-init may still be installing packages; wait with: ssh $NAME cloud-init status --wait"
+
+if command -v code >/dev/null 2>&1; then
+  echo "Installing the Claude Code extension over Remote-SSH..."
+  CODE_OK=0
+  for _ in $(seq 30); do
+    if code --remote "ssh-remote+$NAME" --install-extension anthropic.claude-code >/dev/null 2>&1; then
+      CODE_OK=1
+      break
+    fi
+    sleep 5
+  done
+  if [[ $CODE_OK == 1 ]]; then
+    echo "Claude Code extension installed."
+  else
+    echo "warning: extension install didn't succeed yet (VM may still be booting sshd);" >&2
+    echo "         retry manually: code --remote ssh-remote+$NAME --install-extension anthropic.claude-code" >&2
+  fi
+else
+  echo "note: 'code' CLI not on PATH; install the Claude Code extension manually via Remote-SSH" >&2
+  echo "      (VS Code: Cmd/Ctrl+Shift+P > Shell Command: Install 'code' command in PATH, to enable this next time)" >&2
+fi
