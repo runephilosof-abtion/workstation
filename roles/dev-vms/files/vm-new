@@ -99,9 +99,13 @@ write_files:
       no_proxy=localhost,127.0.0.1
 EOF
 
+# Files under /home/dev must be deferred: plain write_files runs before
+# users_groups creates the dev user, so it would create /home/dev as root and
+# useradd would leave it that way (breaking e.g. VS Code's ~/.vscode-server).
 if [[ -f $CLAUDE_CREDS_FILE ]]; then
   cat >> "$WORK/user-data" <<EOF
   - path: /home/dev/.claude/.credentials.json
+    defer: true
     owner: dev:dev
     permissions: '0600'
     encoding: b64
@@ -112,6 +116,7 @@ fi
 if [[ -n $REPO ]]; then
   cat >> "$WORK/user-data" <<EOF
   - path: /home/dev/.github-token
+    defer: true
     owner: dev:dev
     permissions: '0600'
     encoding: b64

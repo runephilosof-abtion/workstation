@@ -89,6 +89,7 @@ assert_eq "exits 0" 0 "$STATUS"
 USERDATA=$(cat "$STUB_USERDATA")
 assert_contains "writes the credentials file into the guest" "$USERDATA" "/home/dev/.claude/.credentials.json"
 assert_contains "owns it as the dev user" "$USERDATA" "owner: dev:dev"
+assert_contains "defers it until the dev user exists (else /home/dev ends up root-owned)" "$USERDATA" "    defer: true"
 assert_contains "fixes up ~/.claude ownership afterwards" "$USERDATA" "chown -R dev:dev /home/dev/.claude"
 [[ -e $VM_POOL/claudevm-seed.iso ]] && PERMS=$(stat -c%a "$VM_POOL/claudevm-seed.iso") || PERMS=missing
 assert_eq "seed ISO is chmod 600 before libvirt touches it" "600" "$PERMS"
@@ -124,6 +125,7 @@ OUT=$("$SCRIPT" repovm --repo git@github.com:acme/widgets.git --github-token-fil
 assert_eq "exits 0" 0 "$STATUS"
 USERDATA=$(cat "$STUB_USERDATA")
 assert_contains "writes the PAT into the guest" "$USERDATA" "/home/dev/.github-token"
+assert_contains "defers the PAT write until the dev user exists" "$USERDATA" "    defer: true"
 assert_contains "installs the gh CLI" "$USERDATA" "apt-get install -y gh"
 assert_contains "logs gh in with the token, not a password" "$USERDATA" "gh auth login --with-token"
 assert_contains "clones the given repo" "$USERDATA" "gh repo clone git@github.com:acme/widgets.git /home/dev/work/widgets"
