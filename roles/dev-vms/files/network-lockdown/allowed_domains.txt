@@ -19,3 +19,5 @@ nodejs.org
 getcomposer.org
 composer.github.io
 .wpackagist.org
+.wordpress.org
+satispress.abtion.com
