@@ -127,6 +127,15 @@ creation costs seconds and only the delta in disk. Node.js is installed by
 cloud-init on first boot (`VM_NODE_MAJOR` env var overrides the version,
 default 22), followed by `npm install -g @anthropic-ai/claude-code`.
 
+Project runtimes come from [asdf](https://asdf-vm.com): cloud-init installs it
+and the `nodejs` and `php` plugins, then sets the newest Node.js 24 and PHP 8.5
+as the `dev` user's defaults in `~/.tool-versions` (override with
+`VM_ASDF_NODEJS` / `VM_ASDF_PHP`, which take version prefixes; `VM_ASDF_VERSION`
+pins asdf itself). A project's own `.tool-versions` takes precedence. PHP is
+compiled from source, so first boot takes several minutes longer; follow it
+with `ssh myproject cloud-init status --wait`. VMs created before this need the
+same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
+
 `vm-new` also automates the rest of the setup that used to be manual:
 
 - **VS Code extension**: once the VM has an IP, `vm-new` runs

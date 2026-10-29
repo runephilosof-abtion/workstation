@@ -41,6 +41,9 @@ TEMPLATE=${VM_TEMPLATE:-/var/lib/libvirt/images/templates/debian-13-genericcloud
 POOL=${VM_POOL:-/var/lib/libvirt/images/dev-vms}
 KEY=$HOME/.ssh/dev-vm
 NODE_MAJOR=${VM_NODE_MAJOR:-22}
+ASDF_VERSION=${VM_ASDF_VERSION:-v0.20.2}
+ASDF_NODEJS=${VM_ASDF_NODEJS:-24}
+ASDF_PHP=${VM_ASDF_PHP:-8.5}
 DISK_PATH=$POOL/$NAME.qcow2
 SEED_PATH=$POOL/$NAME-seed.iso
 
@@ -110,6 +113,40 @@ write_files:
       no_proxy=localhost,127.0.0.1
 EOF
 
+# asdf manages the per-project node/php versions (.tool-versions).
+cat >> "$WORK/user-data" <<'EOF'
+  - path: /etc/profile.d/asdf.sh
+    content: |
+      case ":$PATH:" in
+        *":${ASDF_DATA_DIR:-$HOME/.asdf}/shims:"*) ;;
+        *) export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH" ;;
+      esac
+  - path: /usr/local/bin/asdf-install-defaults
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      # Installs the newest Node.js and PHP matching the given prefixes and makes
+      # them the user's defaults (~/.tool-versions).
+      # Usage: asdf-install-defaults <nodejs prefix> <php prefix>, e.g. 24 8.5
+      set -euo pipefail
+      plugins=$(asdf plugin list 2>/dev/null || true)
+      grep -qx nodejs <<<"$plugins" || asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
+      grep -qx php <<<"$plugins" || asdf plugin add php https://github.com/asdf-community/asdf-php.git
+      nodejs=$(asdf latest nodejs "$1")
+      php=$(asdf latest php "$2")
+      asdf install nodejs "$nodejs"
+      # The plugin fetches Composer's installer with PHP's copy(), which ignores
+      # http(s)_proxy and so is blocked by the nwfilter. When that fails it falls
+      # back to a composer-setup.php already in the working directory, still
+      # checking its signature. PEAR is skipped: pear.php.net isn't allowed.
+      work=$(mktemp -d)
+      curl -fsSL https://getcomposer.org/installer -o "$work/composer-setup.php"
+      (cd "$work" && PHP_WITHOUT_PEAR=yes ASDF_CONCURRENCY=$(nproc) asdf install php "$php")
+      rm -rf "$work"
+      asdf set -u nodejs "$nodejs"
+      asdf set -u php "$php"
+EOF
+
 # Files under /home/dev must be deferred: plain write_files runs before
 # users_groups creates the dev user, so it would create /home/dev as root and
 # useradd would leave it that way (breaking e.g. VS Code's ~/.vscode-server).
@@ -169,12 +206,36 @@ packages:
   - curl
   - ca-certificates
   - build-essential
+  # asdf-php compiles PHP from source
+  - autoconf
+  - bison
+  - re2c
+  - pkg-config
+  - plocate
+  - libcurl4-openssl-dev
+  - libedit-dev
+  - libgd-dev
+  - libicu-dev
+  - libjpeg-dev
+  - default-libmysqlclient-dev
+  - libonig-dev
+  - libpng-dev
+  - libpq-dev
+  - libreadline-dev
+  - libsqlite3-dev
+  - libssl-dev
+  - libxml2-dev
+  - libzip-dev
+  - zlib1g-dev
 runcmd:
   - su - dev -c vm-git-setup
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
   - apt-get install -y nodejs
   - npm install -g @anthropic-ai/claude-code
+  - curl -fsSL https://github.com/asdf-vm/asdf/releases/download/${ASDF_VERSION}/asdf-${ASDF_VERSION}-linux-amd64.tar.gz | tar -xz -C /usr/local/bin asdf
+  - echo '. /etc/profile.d/asdf.sh' >> /etc/bash.bashrc
+  - su - dev -c 'asdf-install-defaults ${ASDF_NODEJS} ${ASDF_PHP}'
 EOF
 
 [[ -f $CLAUDE_CREDS_FILE ]] && cat >> "$WORK/user-data" <<EOF
