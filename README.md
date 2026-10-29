@@ -109,6 +109,13 @@ new domain in `allowed_domains.txt`, or an updated `vm-new` script) — the
 playbook is idempotent, so it only touches what actually changed, and
 restarts squid itself if the allowlist did.
 
+If only `allowed_domains.txt` changed, the `squid` tag runs just the squid
+tasks instead of the whole playbook:
+
+```sh
+ansible-playbook site.yml -K --tags squid
+```
+
 ## Daily use
 
 ```sh

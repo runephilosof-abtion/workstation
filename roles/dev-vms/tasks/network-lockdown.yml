@@ -21,7 +21,7 @@
     name: squid
     state: present
   become: true
-  tags: system
+  tags: [system, squid]
 
 - name: Deploy squid domain allowlist
   ansible.builtin.copy:
@@ -30,7 +30,7 @@
     mode: "0644"
   become: true
   register: dev_vms_squid_domains
-  tags: system
+  tags: [system, squid]
 
 - name: Deploy squid ACL config
   ansible.builtin.copy:
@@ -39,7 +39,7 @@
     mode: "0644"
   become: true
   register: dev_vms_squid_conf
-  tags: system
+  tags: [system, squid]
 
 - name: Enable and start squid
   ansible.builtin.systemd_service:
@@ -47,7 +47,7 @@
     state: started
     enabled: true
   become: true
-  tags: system
+  tags: [system, squid]
 
 - name: Restart squid if config changed
   ansible.builtin.systemd_service:
@@ -55,7 +55,7 @@
     state: restarted
   become: true
   when: dev_vms_squid_domains.changed or dev_vms_squid_conf.changed
-  tags: system
+  tags: [system, squid]
 
 # The libvirt "default" network runs its own firewalld zone that default-denies anything
 # not explicitly listed (dhcp/dhcpv6/dns/ssh/tftp) — squid's port needs to be added to it or
