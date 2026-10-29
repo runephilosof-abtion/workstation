@@ -107,6 +107,21 @@ assert_eq "exits 0" 0 "$STATUS"
 assert_contains "warns that login will be manual" "$OUT" "login run manually"
 USERDATA=$(cat "$STUB_USERDATA")
 assert_not_contains "never references a credentials file" "$USERDATA" ".claude/.credentials.json"
+assert_not_contains "never references a Composer auth file" "$USERDATA" "composer/auth.json"
+teardown
+
+echo "vm-new: copies Composer auth into cloud-init when present on host"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.23
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+mkdir -p "$HOME/.config/composer"
+echo '{"http-basic":{}}' > "$HOME/.config/composer/auth.json"
+OUT=$("$SCRIPT" composervm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "writes the auth file into the guest" "$USERDATA" "/home/dev/.config/composer/auth.json"
+assert_contains "carries the host file's content" "$USERDATA" "$(base64 -w0 "$HOME/.config/composer/auth.json")"
+assert_contains "fixes up ~/.config ownership afterwards" "$USERDATA" "chown -R dev:dev /home/dev/.config"
 teardown
 
 echo "vm-new: requires a GitHub token file when --repo is given"

@@ -64,6 +64,10 @@ GIT_EMAIL=$(git config --global user.email || true)
 CLAUDE_CREDS_FILE=$HOME/.claude/.credentials.json
 [[ -f $CLAUDE_CREDS_FILE ]] || echo "note: no $CLAUDE_CREDS_FILE on host; Claude Code will need \`claude\` login run manually inside the VM" >&2
 
+# Composer credentials (e.g. Satispress) for private packages; within the VM's
+# blast radius like the Claude session above.
+COMPOSER_AUTH_FILE=${VM_COMPOSER_AUTH:-$HOME/.config/composer/auth.json}
+
 GITHUB_TOKEN=
 REPO_DIR=
 if [[ -n $REPO ]]; then
@@ -161,6 +165,17 @@ if [[ -f $CLAUDE_CREDS_FILE ]]; then
 EOF
 fi
 
+if [[ -f $COMPOSER_AUTH_FILE ]]; then
+  cat >> "$WORK/user-data" <<EOF
+  - path: /home/dev/.config/composer/auth.json
+    defer: true
+    owner: dev:dev
+    permissions: '0600'
+    encoding: b64
+    content: $(base64 -w0 "$COMPOSER_AUTH_FILE")
+EOF
+fi
+
 if [[ -n $REPO ]]; then
   cat >> "$WORK/user-data" <<EOF
   - path: /home/dev/.github-token
@@ -241,6 +256,11 @@ EOF
 [[ -f $CLAUDE_CREDS_FILE ]] && cat >> "$WORK/user-data" <<EOF
   - chown -R dev:dev /home/dev/.claude
   - chmod 700 /home/dev/.claude
+EOF
+
+# write_files creates the parent directories root-owned.
+[[ -f $COMPOSER_AUTH_FILE ]] && cat >> "$WORK/user-data" <<EOF
+  - chown -R dev:dev /home/dev/.config
 EOF
 
 if [[ -n $REPO ]]; then

@@ -160,6 +160,11 @@ same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
   as within that VM's blast radius (same as the GitHub PAT below). If the
   file isn't present, `vm-new` says so and you run `claude` inside the VM to
   log in manually, same as before.
+- **Composer credentials**: if `~/.config/composer/auth.json` exists on the
+  host (or the file `VM_COMPOSER_AUTH` points to), `vm-new` copies it to the
+  same place in the VM, so private Composer repositories such as Satispress
+  work there. Same tradeoff as the Claude login: those credentials are within
+  the VM's blast radius.
 - **Cloning the project**: `vm-new myproject --repo <url>` clones the repo on
   first boot via `gh repo clone`, authenticated with a **fine-grained GitHub
   PAT scoped to just that repo** (not your full GitHub access) — mirroring
