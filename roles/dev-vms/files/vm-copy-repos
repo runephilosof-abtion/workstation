@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+usage() {
+  echo "usage: vm-copy-repos <name> <dir>" >&2
+  exit 1
+}
+
+NAME=${1:-}
+SRC=${2:-}
+[[ -n $NAME && $NAME != -* && -n $SRC && $# -eq 2 ]] || usage
+[[ -d $SRC ]] || { echo "no such directory: $SRC" >&2; exit 1; }
+SRC=$(cd "$SRC" && pwd)
+DST=${VM_REPOS_DEST:-/home/dev/repos}
+
+# Only committed git content (local branches, tags, remote-tracking refs),
+# tracked uncommitted changes and .env/.env.* files cross into the VM. Other
+# untracked files (keys, DB dumps, auth.json, ...) are never copied.
+# Repos already present in the VM are skipped, so re-running only adds new ones.
+
+SSH=(ssh -o ControlMaster=auto -o "ControlPath=${TMPDIR:-/tmp}/vm-copy-repos-%C" -o ControlPersist=60)
+# Host-side pre-push hooks are skipped (--no-verify) and the VM-side repos are
+# freshly initialised, so no hook from either side runs during the copy.
+export GIT_SSH_COMMAND="${SSH[*]}"
+vm() { "${SSH[@]}" "$NAME" "$@"; }
+
+FAILS=0
+fail() { echo "  FAIL: $1" >&2; FAILS=$((FAILS + 1)); }
+
+mapfile -t ENTRIES < <(cd "$SRC" && find . -maxdepth 3 -name .git -printf '%h\n' | sed 's|^\./||' | sort)
+
+MAIN=()
+WORKTREES=()
+for p in "${ENTRIES[@]}"; do
+  if [[ -d $SRC/$p/.git ]]; then
+    MAIN+=("$p")
+  elif grep -q '/worktrees/' "$SRC/$p/.git"; then
+    WORKTREES+=("$p")
+  else
+    echo "skip submodule $p (run git submodule update --init in the VM)"
+  fi
+done
+
+# What the host has checked out, as a `git checkout`/`git worktree add` argument.
+checkout_target() {
+  local branch
+  if branch=$(git -C "$1" symbolic-ref -q --short HEAD) && git -C "$1" rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
+    printf '%q' "$branch"
+  else
+    printf -- '--detach %s' "$(git -C "$1" rev-parse -q --verify HEAD)"
+  fi
+}
+
+apply_tracked_diff() {
+  local p=$1 diff
+  diff=$(git -C "$SRC/$p" diff HEAD --binary) || { fail "git diff in $p"; return; }
+  [[ -n $diff ]] || return 0
+  printf '%s\n' "$diff" | vm "git -C $(printf %q "$DST/$p") apply --whitespace=nowarn" \
+    && echo "  applied uncommitted changes" \
+    || fail "applying uncommitted changes in $p"
+}
+
+COPIED=()
+for p in "${MAIN[@]}"; do
+  qd=$(printf %q "$DST/$p")
+  if vm "test -e $qd/.git"; then
+    echo "skip $p (already in VM)"
+    continue
+  fi
+  echo "copy $p"
+  # Point HEAD at an unborn placeholder so pushing the host's current branch isn't
+  # refused as "updating the checked-out branch".
+  vm "mkdir -p $qd && git -C $qd init -q && git -C $qd symbolic-ref HEAD refs/heads/__vm_copy_repos__" \
+    || { fail "init $p"; continue; }
+  git -C "$SRC/$p" push -q --no-verify "ssh://$NAME$DST/$p" \
+    'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*' 'refs/remotes/*:refs/remotes/*' \
+    || { fail "push $p"; continue; }
+
+  remotes=
+  while read -r rname url; do
+    remotes+="git -C $qd remote add $(printf %q "$rname") $(printf %q "$url") && "
+  done < <(git -C "$SRC/$p" remote -v | awk '$3 == "(fetch)" { print $1, $2 }')
+  vm "${remotes}git -C $qd checkout -q $(checkout_target "$SRC/$p")" \
+    || { fail "checkout $p"; continue; }
+  apply_tracked_diff "$p"
+  COPIED+=("$p")
+done
+
+for p in "${WORKTREES[@]}"; do
+  qd=$(printf %q "$DST/$p")
+  if vm "test -e $qd"; then
+    echo "skip worktree $p (already in VM)"
+    continue
+  fi
+  common=$(git -C "$SRC/$p" rev-parse --path-format=absolute --git-common-dir)
+  main=${common%/.git}
+  [[ $main == "$SRC"/* ]] || { fail "worktree $p belongs to $main, outside $SRC"; continue; }
+  main=${main#"$SRC"/}
+  echo "copy worktree $p (of $main)"
+  vm "git -C $(printf %q "$DST/$main") worktree add -q $qd $(checkout_target "$SRC/$p")" \
+    || { fail "worktree add $p"; continue; }
+  apply_tracked_diff "$p"
+  COPIED+=("$p")
+done
+
+# .env files are dev settings, wanted in the VM even though they're gitignored.
+# Only those inside repos copied by this run, and never overwriting one in the VM.
+if [[ ${#COPIED[@]} -gt 0 ]]; then
+  ENV_FILES=$(cd "$SRC" && find "${COPIED[@]}" \( -name node_modules -o -name vendor -o -name .git \) -prune \
+    -o -type f \( -name .env -o -name '.env.*' \) -print | sort -u)
+  if [[ -n $ENV_FILES ]]; then
+    printf '%s\n' "$ENV_FILES" | tar -C "$SRC" -cf - --files-from - \
+      | vm "tar -C $(printf %q "$DST") --skip-old-files -xf -" \
+      && echo "copied $(wc -l <<<"$ENV_FILES") .env files" \
+      || fail "copying .env files"
+  fi
+fi
+
+"${SSH[@]}" -O exit "$NAME" 2>/dev/null
+echo "done: ${#COPIED[@]} repos/worktrees copied into $NAME:$DST, $FAILS failures"
+[[ $FAILS -eq 0 ]]

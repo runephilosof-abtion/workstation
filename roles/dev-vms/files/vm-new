@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "usage: vm-new <name> [--mem MB] [--vcpus N] [--disk SIZE] [--nested]" >&2
-  echo "                     [--repo URL] [--github-token-file PATH]" >&2
+  echo "                     [--repo URL] [--github-token-file PATH] [--copy-repos DIR]" >&2
   exit 1
 }
 
@@ -17,6 +17,7 @@ DISK=30G
 NESTED=0
 REPO=
 TOKEN_FILE=
+COPY_REPOS=
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mem) MEM=$2; shift 2 ;;
@@ -29,6 +30,8 @@ while [[ $# -gt 0 ]]; do
     # fine-grained PAT scoped to just that repo (see README).
     --repo) REPO=$2; shift 2 ;;
     --github-token-file) TOKEN_FILE=$2; shift 2 ;;
+    # Once the VM is up, copy every git repo under DIR into it via vm-copy-repos.
+    --copy-repos) COPY_REPOS=$2; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -42,6 +45,7 @@ DISK_PATH=$POOL/$NAME.qcow2
 SEED_PATH=$POOL/$NAME-seed.iso
 
 [[ -e $DISK_PATH ]] && { echo "VM disk $DISK_PATH already exists" >&2; exit 1; }
+[[ -z $COPY_REPOS || -d $COPY_REPOS ]] || { echo "--copy-repos: no such directory: $COPY_REPOS" >&2; exit 1; }
 
 # The VM commits as you, but with its own SSH key and GPG signing key generated
 # inside it on first boot (see vm-git-setup below), so nothing on the host has
@@ -264,3 +268,18 @@ else
 fi
 
 echo "Print the VM's own SSH and GPG public keys, to add on GitHub: vm-keys $NAME"
+
+if [[ -n $COPY_REPOS ]]; then
+  echo "Waiting for cloud-init before copying repos from $COPY_REPOS..."
+  SSH_OK=0
+  for _ in $(seq 30); do
+    if ssh -o ConnectTimeout=5 "$NAME" true; then
+      SSH_OK=1
+      break
+    fi
+    sleep 5
+  done
+  [[ $SSH_OK == 1 ]] || { echo "couldn't reach $NAME over ssh; copy later with: vm-copy-repos $NAME $COPY_REPOS" >&2; exit 1; }
+  ssh "$NAME" cloud-init status --wait >/dev/null || echo "warning: cloud-init reported errors; check: ssh $NAME cloud-init status --long" >&2
+  "$(dirname "$0")/vm-copy-repos" "$NAME" "$COPY_REPOS"
+fi

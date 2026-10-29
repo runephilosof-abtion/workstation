@@ -113,8 +113,10 @@ restarts squid itself if the allowlist did.
 
 ```sh
 vm-new myproject              # create a VM (options: --mem MB --vcpus N --disk SIZE)
+vm-new ai --copy-repos ~/repos  # ...and copy every repo under ~/repos into it
 ssh myproject                 # or connect VSCode via Remote-SSH to host "myproject"
 vm-keys myproject             # print the VM's own SSH/GPG public keys, to add on GitHub
+vm-copy-repos myproject ~/repos  # copy repos into an existing VM (skips ones already there)
 vm-list                         # show every dev VM, its state, and its IP if running
 vm-ip myproject               # refresh the SSH config entry if the DHCP lease changed
 vm-dispose myproject          # destroy the VM and delete its disk
@@ -172,6 +174,18 @@ default 22), followed by `npm install -g @anthropic-ai/claude-code`.
   (required PR review, no force-push), since the key can push anywhere your
   account can. Outbound SSH (port 22) is allowed by the egress filter, so the
   usual `git@github.com:` remotes work.
+- **Copying existing repos** (optional): `vm-new <name> --copy-repos ~/repos`,
+  or `vm-copy-repos <name> ~/repos` for a VM that already exists, puts every
+  git repo up to three levels under that directory at the same relative path
+  under `/home/dev/repos`. Copied: all local branches (including unpushed
+  ones), tags, remote-tracking refs and remote URLs; the branch or commit
+  you have checked out; worktrees; uncommitted changes to tracked files; and
+  `.env`/`.env.*` files (treated as dev settings). **Not** copied: any other
+  untracked or ignored file (keys, DB dumps, `auth.json`, `node_modules`, ...),
+  directories that aren't git repos, and submodule contents (run
+  `git submodule update --init` in the VM). Secrets that are *committed* to a
+  repo still come along with its history. Repos already in the VM are
+  skipped, so re-running it only adds new ones; host git hooks never run.
 
 Push to a branch from inside the VM; fetch and review on the host.
 
@@ -179,7 +193,8 @@ Push to a branch from inside the VM; fetch and review on the host.
 
 - `site.yml` — entry point; add future roles (packages, dotfiles, …) here
 - `roles/dev-vms/` — virtualization packages, libvirt network, template image
-  download, and the `vm-new`/`vm-dispose`/`vm-ip`/`vm-list`/`vm-keys` scripts
+  download, and the `vm-new`/`vm-dispose`/`vm-ip`/`vm-list`/`vm-keys`/
+  `vm-copy-repos` scripts
 - `tests/` — test suite for those scripts (see below)
 
 Paths (template dir, VM pool dir, SSH key) are defined in
@@ -193,9 +208,11 @@ default to the same paths (overridable per-invocation via `VM_CONNECT`,
 tests/run.sh
 ```
 
-Runs `tests/test_*.sh` against `vm-new`/`vm-dispose`/`vm-ip`/`vm-list` with a stubbed
-`virsh`/`qemu-img`/`cloud-localds`/`virt-install`/`ssh-keygen`
-(`tests/fixtures/bin/`, put first on `PATH`) — no libvirt, KVM, or network
+Runs `tests/test_*.sh` against `vm-new`/`vm-dispose`/`vm-ip`/`vm-list`/`vm-copy-repos` with a stubbed
+`virsh`/`qemu-img`/`cloud-localds`/`virt-install`/`ssh-keygen`/`ssh`
+(`tests/fixtures/bin/`, put first on `PATH`; the fake `ssh` runs the "remote"
+command locally when `STUB_SSH_EXEC=1`, which is how `vm-copy-repos`' git
+pushes are tested against a sandbox directory) — no libvirt, KVM, or network
 needed, and the real `qemu:///system` connection and `~/.ssh/known_hosts` are
 never touched. Each stub logs its argv to `$STUB_LOG` so tests can assert
 exactly what a script passed it (e.g. that a domain name goes through

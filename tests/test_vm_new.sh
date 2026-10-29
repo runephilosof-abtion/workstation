@@ -178,5 +178,32 @@ assert_contains "says signing is skipped" "$OUT" "no git identity or GPG signing
 assert_contains "still runs the setup" "$(cat "$STUB_USERDATA")" "su - dev -c vm-git-setup"
 teardown
 
+echo "vm-new: --copy-repos rejects a missing directory before creating anything"
+setup
+OUT=$("$SCRIPT" copyvm --copy-repos "$SANDBOX/missing" 2>&1); STATUS=$?
+assert_eq "exits non-zero" 1 "$STATUS"
+assert_contains "names the problem" "$OUT" "no such directory"
+LOG=$(log_or_empty)
+assert_not_contains "never creates a disk" "$LOG" "qemu-img"
+teardown
+
+echo "vm-new: --copy-repos waits for cloud-init, then runs vm-copy-repos"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.27
+mkdir -p "$SANDBOX/empty-repos"
+OUT=$("$SCRIPT" copyvm --copy-repos "$SANDBOX/empty-repos" 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+LOG=$(cat "$STUB_LOG")
+assert_contains "waits for cloud-init in the VM" "$LOG" "ssh copyvm cloud-init status --wait"
+assert_contains "runs vm-copy-repos" "$OUT" "done: 0 repos/worktrees copied into copyvm"
+teardown
+
+echo "vm-new: without --copy-repos, never touches the VM over ssh"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.28
+"$SCRIPT" plainvm >/dev/null 2>&1
+LOG=$(cat "$STUB_LOG")
+assert_not_contains "no ssh calls" "$LOG" "ssh plainvm"
+teardown
 
 finish

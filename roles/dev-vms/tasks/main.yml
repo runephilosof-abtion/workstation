@@ -132,6 +132,7 @@
     - vm-ip
     - vm-list
     - vm-keys
+    - vm-copy-repos
   tags: user
 
 - name: Create SSH config fragment directory

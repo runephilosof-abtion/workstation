@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fake ssh: records its argv. With STUB_SSH_EXEC=1 it runs the remote command
+# locally instead (the "VM" is just this sandbox), so vm-copy-repos can be
+# tested end to end, including the git push that goes through GIT_SSH_COMMAND.
+[[ -n ${STUB_LOG:-} ]] && printf 'ssh %s\n' "$*" >> "$STUB_LOG"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -O) exit 0 ;; # control-master commands (e.g. -O exit) need no remote side
+    -o | -p | -i | -l) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+shift # the host
+
+[[ ${STUB_SSH_EXEC:-} == 1 ]] || exit "${STUB_SSH_EXIT:-0}"
+exec bash -c "$*"
