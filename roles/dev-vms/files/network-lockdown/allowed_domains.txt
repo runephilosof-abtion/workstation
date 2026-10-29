@@ -12,6 +12,9 @@ vscode-redirect.azurewebsites.net
 .exp-tas.com
 .npmjs.org
 repo.packagist.org
+.isitpatched.com
+.endoflife.date
+.kinsta.com
 nodejs.org
 getcomposer.org
 composer.github.io
