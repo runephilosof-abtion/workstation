@@ -43,6 +43,13 @@ SEED_PATH=$POOL/$NAME-seed.iso
 
 [[ -e $DISK_PATH ]] && { echo "VM disk $DISK_PATH already exists" >&2; exit 1; }
 
+# The VM commits as you, but with its own SSH key and GPG signing key generated
+# inside it on first boot (see vm-git-setup below), so nothing on the host has
+# to be shared and revoking those keys on GitHub cuts the VM off.
+GIT_NAME=$(git config --global user.name || true)
+GIT_EMAIL=$(git config --global user.email || true)
+[[ -n $GIT_NAME && -n $GIT_EMAIL ]] || echo "note: no git user.name/user.email on host; the VM gets an SSH key but no git identity or GPG signing key" >&2
+
 # Claude Code OAuth session copied from the host so the VM comes up already
 # logged in under your Claude.ai plan (not billed as separate API usage). This
 # puts that session token inside a VM meant to contain hostile code; treat it
@@ -124,14 +131,42 @@ if [[ -n $REPO ]]; then
 EOF
 fi
 
+# No passphrases: the AI uses these keys unattended, and an unlocked agent is
+# as usable to it as an unencrypted key. Revoking them on GitHub is the control.
+{
+  printf '#!/bin/bash\nset -euo pipefail\n'
+  printf 'VM_NAME=%q GIT_NAME=%q GIT_EMAIL=%q\n' "$NAME" "$GIT_NAME" "$GIT_EMAIL"
+  cat <<'EOF'
+[[ -f ~/.ssh/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "dev@$VM_NAME" -f ~/.ssh/id_ed25519
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+[[ -n $GIT_NAME && -n $GIT_EMAIL ]] || exit 0
+git config --global user.name "$GIT_NAME"
+git config --global user.email "$GIT_EMAIL"
+# A per-VM identity and a 1-year expiry, so its signatures are recognisable as
+# the VM's and the key stops working on its own if forgotten.
+UID_STR="$GIT_NAME ($VM_NAME) <$GIT_EMAIL>"
+gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "$UID_STR" ed25519 sign 1y
+FPR=$(gpg --list-secret-keys --with-colons "$UID_STR" | awk -F: '/^fpr/ { print $10; exit }')
+git config --global user.signingkey "$FPR"
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
+EOF
+} > "$WORK/vm-git-setup"
+
 cat >> "$WORK/user-data" <<EOF
+  - path: /usr/local/bin/vm-git-setup
+    permissions: '0755'
+    encoding: b64
+    content: $(base64 -w0 "$WORK/vm-git-setup")
 package_update: true
 packages:
   - git
+  - gnupg
   - curl
   - ca-certificates
   - build-essential
 runcmd:
+  - su - dev -c vm-git-setup
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
   - apt-get install -y nodejs
@@ -227,3 +262,5 @@ else
   echo "note: 'code' CLI not on PATH; install the Claude Code extension manually via Remote-SSH" >&2
   echo "      (VS Code: Cmd/Ctrl+Shift+P > Shell Command: Install 'code' command in PATH, to enable this next time)" >&2
 fi
+
+echo "Print the VM's own SSH and GPG public keys, to add on GitHub: vm-keys $NAME"

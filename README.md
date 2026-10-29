@@ -114,6 +114,7 @@ restarts squid itself if the allowlist did.
 ```sh
 vm-new myproject              # create a VM (options: --mem MB --vcpus N --disk SIZE)
 ssh myproject                 # or connect VSCode via Remote-SSH to host "myproject"
+vm-keys myproject             # print the VM's own SSH/GPG public keys, to add on GitHub
 vm-list                         # show every dev VM, its state, and its IP if running
 vm-ip myproject               # refresh the SSH config entry if the DHCP lease changed
 vm-dispose myproject          # destroy the VM and delete its disk
@@ -158,6 +159,19 @@ default 22), followed by `npm install -g @anthropic-ai/claude-code`.
   (or pass `--github-token-file` to use a different path). Without `--repo`,
   clone manually inside the VM over HTTPS or a read-only deploy key, same as
   before.
+- **Git identity and keys**: on first boot every VM generates its own
+  ed25519 SSH key and, if your host has `git config --global user.name` and
+  `user.email`, a GPG signing key (`Name (vm-name) <email>`, expiring after
+  one year), and sets git up to commit as you and sign commits and tags. The
+  private keys never exist on the host. Run `vm-keys <name>` to print the
+  public halves and add them at GitHub → Settings → SSH and GPG keys; delete
+  them there to cut the VM off. They have **no passphrase** on purpose: the AI
+  uses them unattended, and an unlocked agent is as usable to it as an
+  unencrypted key, so the passphrase wouldn't keep it out. What keeps the VM
+  out of production is GitHub-side: protect the branches that deploy
+  (required PR review, no force-push), since the key can push anywhere your
+  account can. Outbound SSH (port 22) is allowed by the egress filter, so the
+  usual `git@github.com:` remotes work.
 
 Push to a branch from inside the VM; fetch and review on the host.
 
@@ -165,7 +179,7 @@ Push to a branch from inside the VM; fetch and review on the host.
 
 - `site.yml` — entry point; add future roles (packages, dotfiles, …) here
 - `roles/dev-vms/` — virtualization packages, libvirt network, template image
-  download, and the `vm-new`/`vm-dispose`/`vm-ip`/`vm-list` scripts
+  download, and the `vm-new`/`vm-dispose`/`vm-ip`/`vm-list`/`vm-keys` scripts
 - `tests/` — test suite for those scripts (see below)
 
 Paths (template dir, VM pool dir, SSH key) are defined in

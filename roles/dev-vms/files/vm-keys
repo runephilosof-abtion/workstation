@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "usage: vm-keys <name>" >&2
+  exit 1
+}
+
+NAME=${1:-}
+[[ -n $NAME && $NAME != -* && $# -eq 1 ]] || usage
+
+# vm-new's cloud-init generates these inside the VM, so the private keys never
+# exist on the host. Waits for cloud-init in case the VM is still on first boot.
+ssh "$NAME" bash -s <<'EOF'
+set -euo pipefail
+cloud-init status --wait >/dev/null
+echo "== SSH key (GitHub > Settings > SSH and GPG keys > New SSH key, type Authentication)"
+cat ~/.ssh/id_ed25519.pub
+if KEY=$(git config --global user.signingkey); then
+  echo
+  echo "== GPG key $KEY (GitHub > Settings > SSH and GPG keys > New GPG key)"
+  gpg --armor --export "$KEY"
+else
+  echo
+  echo "(no GPG signing key: the host had no git user.name/user.email when the VM was created)"
+fi
+EOF

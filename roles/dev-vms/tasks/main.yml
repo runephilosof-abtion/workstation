@@ -131,6 +131,7 @@
     - vm-dispose
     - vm-ip
     - vm-list
+    - vm-keys
   tags: user
 
 - name: Create SSH config fragment directory

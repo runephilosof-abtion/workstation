@@ -14,6 +14,9 @@ setup() {
   export VM_CONNECT=stub:///test
   export STUB_LOG=$SANDBOX/stub.log
   export PATH=$FIXTURES:$PATH
+  # vm-new reads the host's git identity; keep the real ~/.gitconfig out of it.
+  export GIT_CONFIG_GLOBAL=$SANDBOX/gitconfig GIT_CONFIG_NOSYSTEM=1
+  touch "$GIT_CONFIG_GLOBAL"
   unset STUB_DOMIFADDR_IP STUB_VIRSH_DOMIFADDR_EXIT
   mkdir -p "$HOME/.ssh" "$VM_POOL"
   # vm-new hardcodes KEY=$HOME/.ssh/dev-vm; a real deployment has this from the
@@ -142,5 +145,38 @@ assert_contains "targets the right ssh-remote alias" "$LOG" "--remote ssh-remote
 assert_contains "installs the Claude Code extension id" "$LOG" "--install-extension anthropic.claude-code"
 assert_contains "reports success" "$OUT" "extension installed"
 teardown
+
+echo "vm-new: sets up the VM's own SSH key, git identity and GPG signing key"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.25
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+git config --global user.name "Ada O'Lovelace"
+git config --global user.email ada@example.com
+OUT=$("$SCRIPT" keysvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "installs gnupg" "$USERDATA" "  - gnupg"
+assert_contains "runs the setup as the dev user" "$USERDATA" "su - dev -c vm-git-setup"
+SETUP=$(awk '/path: \/usr\/local\/bin\/vm-git-setup/ { f = 1 } f && /content:/ { print $2; exit }' "$STUB_USERDATA" | base64 -d)
+assert_contains "carries the host's git identity, shell-quoted" "$SETUP" "GIT_NAME=Ada\ O\'Lovelace GIT_EMAIL=ada@example.com"
+assert_contains "generates a passphrase-less SSH key in the VM" "$SETUP" "ssh-keygen -q -t ed25519 -N ''"
+assert_contains "generates an expiring per-VM GPG signing key" "$SETUP" "ed25519 sign 1y"
+assert_contains "signs commits by default" "$SETUP" "commit.gpgsign true"
+SETUP_FILE=$SANDBOX/vm-git-setup
+printf '%s\n' "$SETUP" > "$SETUP_FILE"
+bash -n "$SETUP_FILE"; assert_eq "setup script is valid bash" 0 "$?"
+assert_contains "points at vm-keys" "$OUT" "vm-keys keysvm"
+teardown
+
+echo "vm-new: without a host git identity, still gives the VM an SSH key"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.26
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$("$SCRIPT" noidvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+assert_contains "says signing is skipped" "$OUT" "no git identity or GPG signing key"
+assert_contains "still runs the setup" "$(cat "$STUB_USERDATA")" "su - dev -c vm-git-setup"
+teardown
+
 
 finish
