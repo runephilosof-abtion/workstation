@@ -122,7 +122,7 @@ USERDATA=$(cat "$STUB_USERDATA")
 assert_contains "writes the auth file into the guest" "$USERDATA" "/home/dev/.config/composer/auth.json"
 assert_contains "carries the host file's content" "$USERDATA" "$(base64 -w0 "$HOME/.config/composer/auth.json")"
 assert_contains "fixes up ~/.config ownership afterwards" "$USERDATA" "chown -R dev:dev /home/dev/.config"
-assert_contains "keeps asdf-php from moving COMPOSER_HOME off the copied file" "$USERDATA" 'export COMPOSER_HOME="${COMPOSER_HOME:-$HOME/.config/composer}"'
+assert_contains "keeps asdf-php from moving COMPOSER_HOME off the copied file" "$USERDATA" "      COMPOSER_HOME=/home/dev/.config/composer"
 teardown
 
 echo "vm-new: reads Composer auth from the host's COMPOSER_HOME"

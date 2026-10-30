@@ -118,6 +118,10 @@ write_files:
       HTTP_PROXY=http://192.168.122.1:3128
       HTTPS_PROXY=http://192.168.122.1:3128
       no_proxy=localhost,127.0.0.1
+      # asdf-php points an unset COMPOSER_HOME into the PHP install, which would
+      # hide the auth.json copied here and lose it on every PHP upgrade. Set here
+      # rather than in a profile script so non-interactive ssh commands get it too.
+      COMPOSER_HOME=/home/dev/.config/composer
 EOF
 
 # asdf manages the per-project node/php versions (.tool-versions).
@@ -128,9 +132,6 @@ cat >> "$WORK/user-data" <<'EOF'
         *":${ASDF_DATA_DIR:-$HOME/.asdf}/shims:"*) ;;
         *) export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH" ;;
       esac
-      # asdf-php points an unset COMPOSER_HOME into the PHP install, which would
-      # hide the auth.json copied to ~/.config/composer and lose it on upgrade.
-      export COMPOSER_HOME="${COMPOSER_HOME:-$HOME/.config/composer}"
   - path: /usr/local/bin/asdf-install-defaults
     permissions: '0755'
     content: |

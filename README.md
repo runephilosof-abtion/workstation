@@ -165,9 +165,12 @@ same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
   `VM_COMPOSER_AUTH` points to), `vm-new` copies it to
   `~/.config/composer/auth.json` in the VM, so private Composer repositories
   such as Satispress work there. The VM sets `COMPOSER_HOME` to that directory
-  in `/etc/profile.d/asdf.sh`. Without it, asdf-php points Composer at
+  in `/etc/environment`, so non-interactive `ssh vm composer …` gets it too.
+  Without it, asdf-php points Composer at
   `~/.asdf/installs/php/<version>/.composer`, which would ignore the copied file
-  and lose it on every PHP upgrade. The same applies on a host that uses asdf's
+  and lose it on every PHP upgrade. One home shared by all PHP versions is
+  Composer's normal layout; only `composer global` packages are tied to a PHP
+  version. The same applies on a host that uses asdf's
   PHP: run `composer config --global home` to see where your credentials are,
   and set `COMPOSER_HOME=~/.config/composer` in your shell profile (moving
   `auth.json` there) so they survive upgrades and `vm-new` finds them. Same tradeoff as the Claude login: those credentials are within
