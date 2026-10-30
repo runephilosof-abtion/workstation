@@ -65,8 +65,11 @@ CLAUDE_CREDS_FILE=$HOME/.claude/.credentials.json
 [[ -f $CLAUDE_CREDS_FILE ]] || echo "note: no $CLAUDE_CREDS_FILE on host; Claude Code will need \`claude\` login run manually inside the VM" >&2
 
 # Composer credentials (e.g. Satispress) for private packages; within the VM's
-# blast radius like the Claude session above.
-COMPOSER_AUTH_FILE=${VM_COMPOSER_AUTH:-$HOME/.config/composer/auth.json}
+# blast radius like the Claude session above. Follows the host's COMPOSER_HOME:
+# with asdf's PHP and COMPOSER_HOME unset, Composer keeps auth.json inside the
+# PHP install (~/.asdf/installs/php/<version>/.composer), not ~/.config/composer.
+COMPOSER_AUTH_FILE=${VM_COMPOSER_AUTH:-${COMPOSER_HOME:-$HOME/.config/composer}/auth.json}
+[[ -f $COMPOSER_AUTH_FILE ]] || echo "note: no $COMPOSER_AUTH_FILE on host; private Composer repositories (e.g. Satispress) won't authenticate inside the VM" >&2
 
 GITHUB_TOKEN=
 REPO_DIR=
@@ -125,6 +128,9 @@ cat >> "$WORK/user-data" <<'EOF'
         *":${ASDF_DATA_DIR:-$HOME/.asdf}/shims:"*) ;;
         *) export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH" ;;
       esac
+      # asdf-php points an unset COMPOSER_HOME into the PHP install, which would
+      # hide the auth.json copied to ~/.config/composer and lose it on upgrade.
+      export COMPOSER_HOME="${COMPOSER_HOME:-$HOME/.config/composer}"
   - path: /usr/local/bin/asdf-install-defaults
     permissions: '0755'
     content: |

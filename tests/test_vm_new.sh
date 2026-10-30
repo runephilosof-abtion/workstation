@@ -17,7 +17,7 @@ setup() {
   # vm-new reads the host's git identity; keep the real ~/.gitconfig out of it.
   export GIT_CONFIG_GLOBAL=$SANDBOX/gitconfig GIT_CONFIG_NOSYSTEM=1
   touch "$GIT_CONFIG_GLOBAL"
-  unset STUB_DOMIFADDR_IP STUB_VIRSH_DOMIFADDR_EXIT
+  unset STUB_DOMIFADDR_IP STUB_VIRSH_DOMIFADDR_EXIT COMPOSER_HOME VM_COMPOSER_AUTH
   mkdir -p "$HOME/.ssh" "$VM_POOL"
   # vm-new hardcodes KEY=$HOME/.ssh/dev-vm; a real deployment has this from the
   # role's "Generate SSH key for dev VMs" task.
@@ -122,6 +122,28 @@ USERDATA=$(cat "$STUB_USERDATA")
 assert_contains "writes the auth file into the guest" "$USERDATA" "/home/dev/.config/composer/auth.json"
 assert_contains "carries the host file's content" "$USERDATA" "$(base64 -w0 "$HOME/.config/composer/auth.json")"
 assert_contains "fixes up ~/.config ownership afterwards" "$USERDATA" "chown -R dev:dev /home/dev/.config"
+assert_contains "keeps asdf-php from moving COMPOSER_HOME off the copied file" "$USERDATA" 'export COMPOSER_HOME="${COMPOSER_HOME:-$HOME/.config/composer}"'
+teardown
+
+echo "vm-new: reads Composer auth from the host's COMPOSER_HOME"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.24
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+export COMPOSER_HOME=$HOME/.asdf/installs/php/8.4.25/.composer
+mkdir -p "$COMPOSER_HOME"
+echo '{"http-basic":{"example.com":{}}}' > "$COMPOSER_HOME/auth.json"
+OUT=$("$SCRIPT" composerhomevm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "carries that file's content" "$USERDATA" "$(base64 -w0 "$COMPOSER_HOME/auth.json")"
+teardown
+
+echo "vm-new: says when there's no Composer auth to copy"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.25
+OUT=$("$SCRIPT" nocomposervm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+assert_contains "names the file it looked for" "$OUT" "no $HOME/.config/composer/auth.json on host"
 teardown
 
 echo "vm-new: requires a GitHub token file when --repo is given"

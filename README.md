@@ -160,10 +160,17 @@ same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
   as within that VM's blast radius (same as the GitHub PAT below). If the
   file isn't present, `vm-new` says so and you run `claude` inside the VM to
   log in manually, same as before.
-- **Composer credentials**: if `~/.config/composer/auth.json` exists on the
-  host (or the file `VM_COMPOSER_AUTH` points to), `vm-new` copies it to the
-  same place in the VM, so private Composer repositories such as Satispress
-  work there. Same tradeoff as the Claude login: those credentials are within
+- **Composer credentials**: if `$COMPOSER_HOME/auth.json` exists on the host
+  (`~/.config/composer/auth.json` when `COMPOSER_HOME` is unset, or the file
+  `VM_COMPOSER_AUTH` points to), `vm-new` copies it to
+  `~/.config/composer/auth.json` in the VM, so private Composer repositories
+  such as Satispress work there. The VM sets `COMPOSER_HOME` to that directory
+  in `/etc/profile.d/asdf.sh`. Without it, asdf-php points Composer at
+  `~/.asdf/installs/php/<version>/.composer`, which would ignore the copied file
+  and lose it on every PHP upgrade. The same applies on a host that uses asdf's
+  PHP: run `composer config --global home` to see where your credentials are,
+  and set `COMPOSER_HOME=~/.config/composer` in your shell profile (moving
+  `auth.json` there) so they survive upgrades and `vm-new` finds them. Same tradeoff as the Claude login: those credentials are within
   the VM's blast radius.
 - **Cloning the project**: `vm-new myproject --repo <url>` clones the repo on
   first boot via `gh repo clone`, authenticated with a **fine-grained GitHub
