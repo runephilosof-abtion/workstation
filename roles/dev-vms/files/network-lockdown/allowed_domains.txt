@@ -21,3 +21,7 @@ composer.github.io
 .wpackagist.org
 .wordpress.org
 satispress.abtion.com
+.ruby-lang.org
+.rubygems.org
+.postgresql.org
+.redis.io
