@@ -93,6 +93,8 @@ assert_eq "exits 0" 0 "$STATUS"
 USERDATA=$(cat "$STUB_USERDATA")
 assert_contains "sets the token in /etc/environment" "$USERDATA" "      CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-stub"
 assert_not_contains "never copies the host's rotating login session" "$USERDATA" ".claude/.credentials.json"
+assert_contains "installs Claude Code as dev, so it can self-update" "$USERDATA" "su - dev -c 'curl -fsSL https://claude.ai/install.sh | bash'"
+assert_not_contains "never installs Claude Code root-owned via npm" "$USERDATA" "npm install -g @anthropic-ai/claude-code"
 [[ -e $VM_POOL/claudevm-seed.iso ]] && PERMS=$(stat -c%a "$VM_POOL/claudevm-seed.iso") || PERMS=missing
 assert_eq "seed ISO is chmod 600 before libvirt touches it" "600" "$PERMS"
 teardown

@@ -262,7 +262,10 @@ runcmd:
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
   - apt-get install -y nodejs
-  - npm install -g @anthropic-ai/claude-code
+  # Native installer as dev, into ~/.local, so Claude can update itself; an
+  # npm -g install as root leaves it unable to.
+  - su - dev -c 'curl -fsSL https://claude.ai/install.sh | bash'
+  - ln -sf /home/dev/.local/bin/claude /usr/local/bin/claude
   - curl -fsSL https://github.com/asdf-vm/asdf/releases/download/${ASDF_VERSION}/asdf-${ASDF_VERSION}-linux-amd64.tar.gz | tar -xz -C /usr/local/bin asdf
   - echo '. /etc/profile.d/asdf.sh' >> /etc/bash.bashrc
   - su - dev -c 'asdf-install-defaults ${ASDF_NODEJS} ${ASDF_PHP}'

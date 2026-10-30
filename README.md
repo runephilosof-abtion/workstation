@@ -132,7 +132,8 @@ vm-dispose myproject          # destroy the VM and delete its disk
 `vm-new` boots a copy-on-write overlay of a shared Debian template image, so
 creation costs seconds and only the delta in disk. Node.js is installed by
 cloud-init on first boot (`VM_NODE_MAJOR` env var overrides the version,
-default 22), followed by `npm install -g @anthropic-ai/claude-code`.
+default 22). Claude Code comes from its native installer, run as `dev` so it
+lands in `~/.local` and can update itself (an `npm install -g` as root can't).
 
 Project runtimes come from [asdf](https://asdf-vm.com): cloud-init installs it
 and the `nodejs` and `php` plugins, then sets the newest Node.js 24 and PHP 8.5

@@ -9,6 +9,7 @@
 vscode-redirect.azurewebsites.net
 .anthropic.com
 .claude.com
+.claude.ai
 .exp-tas.com
 .npmjs.org
 repo.packagist.org
