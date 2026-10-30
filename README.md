@@ -54,7 +54,7 @@ real enforcement point is the **host**, which the guest can't see or modify:
 
 ### Copied credentials
 
-`vm-new` can copy a Claude Code OAuth session and a GitHub PAT into a new VM
+`vm-new` can copy a Claude Code OAuth token and a GitHub PAT into a new VM
 (see [Daily use](#daily-use)) so it comes up already authenticated. Both are
 real exceptions to "no shared filesystem" above — deliberately, since the
 project the VM exists to run needs *some* credential to reach Claude and
@@ -70,7 +70,7 @@ time) doesn't change the exposure, just the convenience. Mitigations:
   on a new host rather than assuming it holds
 - once copied in, both are as exposed as anything else `vm-dispose` deletes
   with the VM: if a project turns out to need a fully untrusted VM, skip
-  `--repo`/rely on no host `~/.claude` creds and authenticate by hand instead
+  `--repo`/rely on no host Claude token and authenticate by hand instead
 
 Recovering a VM that's lost network reachability (e.g. after a live interface
 change) sometimes needs `virsh shutdown` + `virsh start` rather than
@@ -151,15 +151,26 @@ same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
   needs the `code` CLI on your host `PATH` (VS Code: *Shell Command: Install
   'code' command in PATH*, once). If `code` isn't found, or the VM's sshd
   isn't up yet, it just prints a one-line command to run by hand.
-- **Claude Code login**: if `~/.claude/.credentials.json` exists on the host,
-  `vm-new` copies it into the VM (`/home/dev/.claude/.credentials.json`), so
-  Claude Code is already logged in under your Claude.ai plan — no separate,
-  metered API billing, since it's using your normal subscription session
-  rather than an API key. **Tradeoff**: that session token now lives inside a
-  VM whose whole point is to contain code that might be hostile, so treat it
-  as within that VM's blast radius (same as the GitHub PAT below). If the
-  file isn't present, `vm-new` says so and you run `claude` inside the VM to
-  log in manually, same as before.
+- **Claude Code login**: if `~/.config/dev-vms/claude.token` exists on the
+  host (or the file `VM_CLAUDE_TOKEN` points to), `vm-new` sets it as
+  `CLAUDE_CODE_OAUTH_TOKEN` in the VM's `/etc/environment`, so Claude Code is
+  already logged in under your Claude.ai plan — no separate, metered API
+  billing, since it's a subscription token rather than an API key. Create it
+  once with `claude setup-token` (valid for a year):
+  ```sh
+  mkdir -p ~/.config/dev-vms && chmod 700 ~/.config/dev-vms
+  claude setup-token   # then paste the printed token into:
+  echo YOUR_TOKEN > ~/.config/dev-vms/claude.token
+  chmod 600 ~/.config/dev-vms/claude.token
+  ```
+  Don't copy `~/.claude/.credentials.json` instead (as `vm-new` used to): its
+  refresh token rotates on use, so the host and the VM log each other out
+  with "Login expired". **Tradeoff**: the token now lives inside a VM whose
+  whole point is to contain code that might be hostile, so treat it as within
+  that VM's blast radius (same as the GitHub PAT below). If the file isn't
+  present, `vm-new` says so and you run `claude` inside the VM to log in
+  manually. VMs created before this keep the copied session: run `/login` in
+  them, or add the `CLAUDE_CODE_OAUTH_TOKEN=` line to `/etc/environment` by hand.
 - **Composer credentials**: if `$COMPOSER_HOME/auth.json` exists on the host
   (`~/.config/composer/auth.json` when `COMPOSER_HOME` is unset, or the file
   `VM_COMPOSER_AUTH` points to), `vm-new` copies it to

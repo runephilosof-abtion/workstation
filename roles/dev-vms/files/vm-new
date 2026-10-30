@@ -57,15 +57,23 @@ GIT_NAME=$(git config --global user.name || true)
 GIT_EMAIL=$(git config --global user.email || true)
 [[ -n $GIT_NAME && -n $GIT_EMAIL ]] || echo "note: no git user.name/user.email on host; the VM gets an SSH key but no git identity or GPG signing key" >&2
 
-# Claude Code OAuth session copied from the host so the VM comes up already
-# logged in under your Claude.ai plan (not billed as separate API usage). This
-# puts that session token inside a VM meant to contain hostile code; treat it
-# as within this VM's blast radius, same as the GitHub PAT below.
-CLAUDE_CREDS_FILE=$HOME/.claude/.credentials.json
-[[ -f $CLAUDE_CREDS_FILE ]] || echo "note: no $CLAUDE_CREDS_FILE on host; Claude Code will need \`claude\` login run manually inside the VM" >&2
+# Long-lived Claude Code OAuth token (from `claude setup-token`) so the VM comes
+# up already logged in under your Claude.ai plan (not billed as separate API
+# usage). Not a copy of ~/.claude/.credentials.json: its refresh token rotates,
+# so whichever of host and VM refreshed second got logged out. This puts the
+# token inside a VM meant to contain hostile code; treat it as within this
+# VM's blast radius, same as the GitHub PAT below.
+CLAUDE_TOKEN_FILE=${VM_CLAUDE_TOKEN:-$HOME/.config/dev-vms/claude.token}
+CLAUDE_TOKEN=
+if [[ -f $CLAUDE_TOKEN_FILE ]]; then
+  CLAUDE_TOKEN=$(<"$CLAUDE_TOKEN_FILE")
+else
+  echo "note: no $CLAUDE_TOKEN_FILE on host; Claude Code will need \`claude\` login run manually inside the VM" >&2
+  echo "      (to skip that next time: claude setup-token, then save the token there, chmod 600)" >&2
+fi
 
 # Composer credentials (e.g. Satispress) for private packages; within the VM's
-# blast radius like the Claude session above. Follows the host's COMPOSER_HOME:
+# blast radius like the Claude token above. Follows the host's COMPOSER_HOME:
 # with asdf's PHP and COMPOSER_HOME unset, Composer keeps auth.json inside the
 # PHP install (~/.asdf/installs/php/<version>/.composer), not ~/.config/composer.
 COMPOSER_AUTH_FILE=${VM_COMPOSER_AUTH:-${COMPOSER_HOME:-$HOME/.config/composer}/auth.json}
@@ -158,20 +166,20 @@ cat >> "$WORK/user-data" <<'EOF'
       asdf set -u php "$php"
 EOF
 
-# Files under /home/dev must be deferred: plain write_files runs before
-# users_groups creates the dev user, so it would create /home/dev as root and
-# useradd would leave it that way (breaking e.g. VS Code's ~/.vscode-server).
-if [[ -f $CLAUDE_CREDS_FILE ]]; then
+# /etc/environment, like COMPOSER_HOME above, so it reaches non-interactive ssh
+# commands and the VS Code extension too.
+if [[ -n $CLAUDE_TOKEN ]]; then
   cat >> "$WORK/user-data" <<EOF
-  - path: /home/dev/.claude/.credentials.json
-    defer: true
-    owner: dev:dev
-    permissions: '0600'
-    encoding: b64
-    content: $(base64 -w0 "$CLAUDE_CREDS_FILE")
+  - path: /etc/environment
+    append: true
+    content: |
+      CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_TOKEN
 EOF
 fi
 
+# Files under /home/dev must be deferred: plain write_files runs before
+# users_groups creates the dev user, so it would create /home/dev as root and
+# useradd would leave it that way (breaking e.g. VS Code's ~/.vscode-server).
 if [[ -f $COMPOSER_AUTH_FILE ]]; then
   cat >> "$WORK/user-data" <<EOF
   - path: /home/dev/.config/composer/auth.json
@@ -260,11 +268,6 @@ runcmd:
   - su - dev -c 'asdf-install-defaults ${ASDF_NODEJS} ${ASDF_PHP}'
 EOF
 
-[[ -f $CLAUDE_CREDS_FILE ]] && cat >> "$WORK/user-data" <<EOF
-  - chown -R dev:dev /home/dev/.claude
-  - chmod 700 /home/dev/.claude
-EOF
-
 # write_files creates the parent directories root-owned.
 [[ -f $COMPOSER_AUTH_FILE ]] && cat >> "$WORK/user-data" <<EOF
   - chown -R dev:dev /home/dev/.config
@@ -285,7 +288,7 @@ EOF
 fi
 
 cloud-localds "$SEED_PATH" "$WORK/user-data"
-# Best-effort: the seed ISO now carries copied secrets (Claude OAuth session,
+# Best-effort: the seed ISO now carries copied secrets (Claude OAuth token,
 # GitHub PAT). libvirt's storage driver may re-chown/re-mode this on first use
 # (observed 0644 libvirt-qemu:libvirt-qemu on this host), so this isn't a firm
 # guarantee -- verify on a new host rather than relying on it.

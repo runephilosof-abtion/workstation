@@ -17,7 +17,7 @@ setup() {
   # vm-new reads the host's git identity; keep the real ~/.gitconfig out of it.
   export GIT_CONFIG_GLOBAL=$SANDBOX/gitconfig GIT_CONFIG_NOSYSTEM=1
   touch "$GIT_CONFIG_GLOBAL"
-  unset STUB_DOMIFADDR_IP STUB_VIRSH_DOMIFADDR_EXIT COMPOSER_HOME VM_COMPOSER_AUTH
+  unset STUB_DOMIFADDR_IP STUB_VIRSH_DOMIFADDR_EXIT COMPOSER_HOME VM_COMPOSER_AUTH VM_CLAUDE_TOKEN
   mkdir -p "$HOME/.ssh" "$VM_POOL"
   # vm-new hardcodes KEY=$HOME/.ssh/dev-vm; a real deployment has this from the
   # role's "Generate SSH key for dev VMs" task.
@@ -81,32 +81,43 @@ assert_eq "exits non-zero" 1 "$STATUS"
 assert_contains "reports the timeout" "$OUT" "Timed out waiting for an IP"
 teardown
 
-echo "vm-new: copies Claude Code credentials into cloud-init when present on host"
+echo "vm-new: passes the Claude Code token into the VM's environment when present on host"
 setup
 export STUB_DOMIFADDR_IP=203.0.113.21
 export STUB_USERDATA=$SANDBOX/user-data.rendered
-mkdir -p "$HOME/.claude"
+mkdir -p "$HOME/.config/dev-vms" "$HOME/.claude"
+echo 'sk-ant-oat01-stub' > "$HOME/.config/dev-vms/claude.token"
 echo '{"stub":"creds"}' > "$HOME/.claude/.credentials.json"
 OUT=$("$SCRIPT" claudevm 2>&1); STATUS=$?
 assert_eq "exits 0" 0 "$STATUS"
 USERDATA=$(cat "$STUB_USERDATA")
-assert_contains "writes the credentials file into the guest" "$USERDATA" "/home/dev/.claude/.credentials.json"
-assert_contains "owns it as the dev user" "$USERDATA" "owner: dev:dev"
-assert_contains "defers it until the dev user exists (else /home/dev ends up root-owned)" "$USERDATA" "    defer: true"
-assert_contains "fixes up ~/.claude ownership afterwards" "$USERDATA" "chown -R dev:dev /home/dev/.claude"
+assert_contains "sets the token in /etc/environment" "$USERDATA" "      CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-stub"
+assert_not_contains "never copies the host's rotating login session" "$USERDATA" ".claude/.credentials.json"
 [[ -e $VM_POOL/claudevm-seed.iso ]] && PERMS=$(stat -c%a "$VM_POOL/claudevm-seed.iso") || PERMS=missing
 assert_eq "seed ISO is chmod 600 before libvirt touches it" "600" "$PERMS"
 teardown
 
-echo "vm-new: skips Claude credentials when none exist on host"
+echo "vm-new: reads the Claude Code token from VM_CLAUDE_TOKEN"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.29
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+export VM_CLAUDE_TOKEN=$SANDBOX/other.token
+echo 'sk-ant-oat01-other' > "$VM_CLAUDE_TOKEN"
+OUT=$("$SCRIPT" claudeenvvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+assert_contains "carries that file's token" "$(cat "$STUB_USERDATA")" "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-other"
+teardown
+
+echo "vm-new: skips the Claude Code token when none exists on host"
 setup
 export STUB_DOMIFADDR_IP=203.0.113.22
 export STUB_USERDATA=$SANDBOX/user-data.rendered
 OUT=$("$SCRIPT" nocredsvm 2>&1); STATUS=$?
 assert_eq "exits 0" 0 "$STATUS"
 assert_contains "warns that login will be manual" "$OUT" "login run manually"
+assert_contains "says how to create the token" "$OUT" "claude setup-token"
 USERDATA=$(cat "$STUB_USERDATA")
-assert_not_contains "never references a credentials file" "$USERDATA" ".claude/.credentials.json"
+assert_not_contains "never sets a token" "$USERDATA" "CLAUDE_CODE_OAUTH_TOKEN"
 assert_not_contains "never references a Composer auth file" "$USERDATA" "composer/auth.json"
 teardown
 
