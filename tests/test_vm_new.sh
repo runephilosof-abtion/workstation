@@ -74,6 +74,20 @@ assert_contains "ssh config has the right Host" "$CONTENT" "Host happyvm"
 assert_contains "ssh config has the assigned IP" "$CONTENT" "HostName 203.0.113.20"
 teardown
 
+echo "vm-new: installs Docker with compose, usable by dev and pulling via the proxy"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.23
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$("$SCRIPT" dockervm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "installs the Docker engine" "$USERDATA" "  - docker.io"
+assert_contains "installs compose" "$USERDATA" "  - docker-compose"
+assert_contains "lets dev use docker without sudo" "$USERDATA" "usermod -aG docker dev"
+assert_contains "points dockerd at the squid proxy" "$USERDATA" "/etc/systemd/system/docker.service.d/http-proxy.conf"
+assert_contains "proxies dockerd's HTTPS pulls" "$USERDATA" '"HTTPS_PROXY=http://192.168.122.1:3128"'
+teardown
+
 echo "vm-new: times out cleanly if the VM never gets an IP"
 setup
 OUT=$("$SCRIPT" noip 2>&1); STATUS=$?

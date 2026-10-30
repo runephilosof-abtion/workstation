@@ -130,6 +130,12 @@ write_files:
       # hide the auth.json copied here and lose it on every PHP upgrade. Set here
       # rather than in a profile script so non-interactive ssh commands get it too.
       COMPOSER_HOME=/home/dev/.config/composer
+  # dockerd is a systemd service, so it sees neither /etc/environment nor apt's
+  # proxy; without this, image pulls hit the nwfilter directly and fail.
+  - path: /etc/systemd/system/docker.service.d/http-proxy.conf
+    content: |
+      [Service]
+      Environment="HTTP_PROXY=http://192.168.122.1:3128" "HTTPS_PROXY=http://192.168.122.1:3128" "NO_PROXY=localhost,127.0.0.1"
 EOF
 
 # asdf manages the per-project node/php versions (.tool-versions).
@@ -257,7 +263,11 @@ packages:
   - libxml2-dev
   - libzip-dev
   - zlib1g-dev
+  # Debian's docker-compose also ships the "docker compose" CLI plugin.
+  - docker.io
+  - docker-compose
 runcmd:
+  - usermod -aG docker dev
   - su - dev -c vm-git-setup
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -

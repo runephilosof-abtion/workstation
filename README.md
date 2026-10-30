@@ -144,6 +144,14 @@ compiled from source, so first boot takes several minutes longer; follow it
 with `ssh myproject cloud-init status --wait`. VMs created before this need the
 same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
 
+Docker and `docker compose` come from Debian's `docker.io` and
+`docker-compose` packages, with `dev` in the `docker` group. The daemon pulls
+through the squid proxy (a systemd drop-in, since it doesn't read
+`/etc/environment`), and Docker Hub is on the allowlist; images from other
+registries (e.g. `ghcr.io`) need their domains added. Containers themselves get
+no proxy settings, so a `docker build` step that downloads something needs
+`--build-arg http_proxy=...` or a `proxies` entry in `~/.docker/config.json`.
+
 `vm-new` also automates the rest of the setup that used to be manual:
 
 - **VS Code extension**: once the VM has an IP, `vm-new` runs
