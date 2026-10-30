@@ -164,17 +164,27 @@ same setup done by hand; the steps are the asdf parts of `vm-new`'s cloud-init.
   (`~/.config/composer/auth.json` when `COMPOSER_HOME` is unset, or the file
   `VM_COMPOSER_AUTH` points to), `vm-new` copies it to
   `~/.config/composer/auth.json` in the VM, so private Composer repositories
-  such as Satispress work there. The VM sets `COMPOSER_HOME` to that directory
-  in `/etc/environment`, so non-interactive `ssh vm composer …` gets it too.
-  Without it, asdf-php points Composer at
-  `~/.asdf/installs/php/<version>/.composer`, which would ignore the copied file
-  and lose it on every PHP upgrade. One home shared by all PHP versions is
+  such as Satispress work there. Same tradeoff as the Claude login: those
+  credentials are within the VM's blast radius. Typically the file holds:
+  - `http-basic` for `satispress.abtion.com`: a Satispress API key as the
+    username and the fixed password `satispress`
+    (`composer config --global http-basic.satispress.abtion.com <key> satispress`)
+  - `github-oauth` for `github.com`, only to lift GitHub's anonymous API rate
+    limit. Make it a fine-grained token with *Public repositories (read-only)*
+    access and no account permissions, so copying it into every VM exposes
+    nothing private (`composer config --global github-oauth.github.com <token>`)
+
+  The VM sets `COMPOSER_HOME` to `~/.config/composer` in `/etc/environment`,
+  so it also applies outside login shells (e.g.
+  `ssh vm ~/.asdf/shims/composer …`, as the shims are only on `PATH` in login
+  and interactive shells). Without it, asdf-php points Composer at
+  `~/.asdf/installs/php/<version>/.composer`, which would ignore the copied
+  file and lose it on every PHP upgrade. One home shared by all PHP versions is
   Composer's normal layout; only `composer global` packages are tied to a PHP
-  version. The same applies on a host that uses asdf's
-  PHP: run `composer config --global home` to see where your credentials are,
-  and set `COMPOSER_HOME=~/.config/composer` in your shell profile (moving
-  `auth.json` there) so they survive upgrades and `vm-new` finds them. Same tradeoff as the Claude login: those credentials are within
-  the VM's blast radius.
+  version. The same applies on a host that uses asdf's PHP: run
+  `composer config --global home` to see where your credentials are, and set
+  `COMPOSER_HOME=~/.config/composer` in your shell profile (moving `auth.json`
+  there) so they survive upgrades and `vm-new` finds them.
 - **Cloning the project**: `vm-new myproject --repo <url>` clones the repo on
   first boot via `gh repo clone`, authenticated with a **fine-grained GitHub
   PAT scoped to just that repo** (not your full GitHub access) — mirroring
