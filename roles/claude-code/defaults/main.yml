@@ -1,0 +1,5 @@
+---
+# Days Claude Code keeps chat transcripts before deleting them at startup
+# (its own default is 30). vm-new gives dev VMs the same value via
+# VM_CLAUDE_CLEANUP_DAYS, so change both together.
+claude_code_cleanup_period_days: 90

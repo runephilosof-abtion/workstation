@@ -44,10 +44,14 @@ NODE_MAJOR=${VM_NODE_MAJOR:-22}
 ASDF_VERSION=${VM_ASDF_VERSION:-v0.20.2}
 ASDF_NODEJS=${VM_ASDF_NODEJS:-24}
 ASDF_PHP=${VM_ASDF_PHP:-8.5}
+# Keep Claude Code transcripts this long (its default is 30 days); matches the
+# host's claude_code_cleanup_period_days in roles/claude-code/defaults/main.yml.
+CLAUDE_CLEANUP_DAYS=${VM_CLAUDE_CLEANUP_DAYS:-90}
 DISK_PATH=$POOL/$NAME.qcow2
 SEED_PATH=$POOL/$NAME-seed.iso
 
 [[ -e $DISK_PATH ]] && { echo "VM disk $DISK_PATH already exists" >&2; exit 1; }
+[[ $CLAUDE_CLEANUP_DAYS =~ ^[0-9]+$ ]] || { echo "VM_CLAUDE_CLEANUP_DAYS must be a whole number of days" >&2; exit 1; }
 [[ -z $COPY_REPOS || -d $COPY_REPOS ]] || { echo "--copy-repos: no such directory: $COPY_REPOS" >&2; exit 1; }
 
 # The VM commits as you, but with its own SSH key and GPG signing key generated
@@ -186,6 +190,17 @@ fi
 # Files under /home/dev must be deferred: plain write_files runs before
 # users_groups creates the dev user, so it would create /home/dev as root and
 # useradd would leave it that way (breaking e.g. VS Code's ~/.vscode-server).
+cat >> "$WORK/user-data" <<EOF
+  - path: /home/dev/.claude/settings.json
+    defer: true
+    owner: dev:dev
+    permissions: '0600'
+    content: |
+      {
+        "cleanupPeriodDays": $CLAUDE_CLEANUP_DAYS
+      }
+EOF
+
 if [[ -f $COMPOSER_AUTH_FILE ]]; then
   cat >> "$WORK/user-data" <<EOF
   - path: /home/dev/.config/composer/auth.json
@@ -267,6 +282,9 @@ packages:
   - docker.io
   - docker-compose
 runcmd:
+  # write_files creates /home/dev/.claude root-owned; fix it before the Claude
+  # installer, running as dev, needs to write there.
+  - chown -R dev:dev /home/dev/.claude
   - usermod -aG docker dev
   - su - dev -c vm-git-setup
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128

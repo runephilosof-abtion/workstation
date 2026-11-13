@@ -3,3 +3,4 @@
   hosts: workstation
   roles:
     - dev-vms
+    - claude-code

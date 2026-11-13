@@ -1,0 +1,38 @@
+---
+# Claude Code rewrites ~/.claude/settings.json itself (/config, plugins, ...),
+# so only this key is managed: the file is read, the key merged in, and it is
+# written back only when the value differs.
+- name: Create Claude Code config directory
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.claude"
+    state: directory
+    mode: "0700"
+  tags: user
+
+- name: Check for Claude Code user settings
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/.claude/settings.json"
+  register: claude_code_settings_stat
+  tags: user
+
+- name: Read Claude Code user settings
+  ansible.builtin.slurp:
+    src: "{{ ansible_env.HOME }}/.claude/settings.json"
+  register: claude_code_settings_raw
+  when: claude_code_settings_stat.stat.exists
+  tags: user
+
+- name: Set cleanupPeriodDays in Claude Code user settings
+  vars:
+    claude_code_settings: >-
+      {{ (claude_code_settings_raw.content | b64decode | from_json)
+         if claude_code_settings_stat.stat.exists else {} }}
+  ansible.builtin.copy:
+    content: >-
+      {{ claude_code_settings
+         | combine({'cleanupPeriodDays': claude_code_cleanup_period_days | int})
+         | to_nice_json(indent=2, sort_keys=False, ensure_ascii=False) }}
+    dest: "{{ ansible_env.HOME }}/.claude/settings.json"
+    mode: "0600"
+  when: claude_code_settings.cleanupPeriodDays | default(none) != claude_code_cleanup_period_days | int
+  tags: user

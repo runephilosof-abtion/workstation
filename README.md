@@ -180,6 +180,10 @@ no proxy settings, so a `docker build` step that downloads something needs
   present, `vm-new` says so and you run `claude` inside the VM to log in
   manually. VMs created before this keep the copied session: run `/login` in
   them, or add the `CLAUDE_CODE_OAUTH_TOKEN=` line to `/etc/environment` by hand.
+- **Claude Code settings**: the VM's `~/.claude/settings.json` sets
+  `cleanupPeriodDays` to 90 (override with `VM_CLAUDE_CLEANUP_DAYS`), so
+  transcripts are kept as long as on the host instead of Claude Code's default
+  30 days.
 - **Composer credentials**: if `$COMPOSER_HOME/auth.json` exists on the host
   (`~/.config/composer/auth.json` when `COMPOSER_HOME` is unset, or the file
   `VM_COMPOSER_AUTH` points to), `vm-new` copies it to
@@ -256,6 +260,9 @@ Push to a branch from inside the VM; fetch and review on the host.
 - `roles/dev-vms/` — virtualization packages, libvirt network, template image
   download, and the `vm-new`/`vm-dispose`/`vm-ip`/`vm-list`/`vm-keys`/
   `vm-copy-repos` scripts
+- `roles/claude-code/` — host Claude Code settings: sets `cleanupPeriodDays`
+  (`claude_code_cleanup_period_days`, default 90) in `~/.claude/settings.json`,
+  leaving the file's other settings alone
 - `tests/` — test suite for those scripts (see below)
 
 Paths (template dir, VM pool dir, SSH key) are defined in

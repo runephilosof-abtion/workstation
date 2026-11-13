@@ -113,6 +113,35 @@ assert_not_contains "never installs Claude Code root-owned via npm" "$USERDATA" 
 assert_eq "seed ISO is chmod 600 before libvirt touches it" "600" "$PERMS"
 teardown
 
+echo "vm-new: sets Claude Code's transcript retention in the guest"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.21
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$("$SCRIPT" cleanupvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "writes dev's Claude settings" "$USERDATA" "/home/dev/.claude/settings.json"
+assert_contains "keeps transcripts 90 days by default" "$USERDATA" '"cleanupPeriodDays": 90'
+assert_contains "hands ~/.claude back to dev" "$USERDATA" "chown -R dev:dev /home/dev/.claude"
+teardown
+
+echo "vm-new: VM_CLAUDE_CLEANUP_DAYS overrides the retention"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.21
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$(VM_CLAUDE_CLEANUP_DAYS=365 "$SCRIPT" cleanupvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+assert_contains "uses the override" "$(cat "$STUB_USERDATA")" '"cleanupPeriodDays": 365'
+teardown
+
+echo "vm-new: rejects a non-numeric VM_CLAUDE_CLEANUP_DAYS"
+setup
+OUT=$(VM_CLAUDE_CLEANUP_DAYS=90d "$SCRIPT" cleanupvm 2>&1); STATUS=$?
+assert_eq "exits non-zero" 1 "$STATUS"
+assert_contains "says why" "$OUT" "VM_CLAUDE_CLEANUP_DAYS"
+assert_not_contains "never creates a disk" "$(log_or_empty)" "qemu-img"
+teardown
+
 echo "vm-new: reads the Claude Code token from VM_CLAUDE_TOKEN"
 setup
 export STUB_DOMIFADDR_IP=203.0.113.29
