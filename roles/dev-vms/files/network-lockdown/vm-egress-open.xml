@@ -1,6 +1,6 @@
 <filter name='vm-egress-open' chain='root'>
   <uuid>3f0c9b6e-5d21-4a8e-9c47-1e2b7d6a4f10</uuid>
-  <!-- For VMs created with `vm-new --open-network`: unrestricted internet egress, no squid
+  <!-- For VMs created with vm-new's open-network option: unrestricted internet egress, no squid
        proxy, but still no lateral movement to other VMs on virbr0 (each VM holds its own
        repo PAT and keys). The DHCP, return-traffic and lateral-block rules are copied from
        vm-egress-lockdown.xml; see the comments there for why each one is needed. -->
