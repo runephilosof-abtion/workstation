@@ -12,6 +12,7 @@ vscode-redirect.azurewebsites.net
 .claude.ai
 .docker.io
 production.cloudflare.docker.com
+production.cloudfront.docker.com
 .exp-tas.com
 .npmjs.org
 repo.packagist.org
@@ -28,3 +29,4 @@ satispress.abtion.com
 .rubygems.org
 .postgresql.org
 .redis.io
+.php.net
