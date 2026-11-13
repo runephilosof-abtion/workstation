@@ -88,6 +88,35 @@ assert_contains "points dockerd at the squid proxy" "$USERDATA" "/etc/systemd/sy
 assert_contains "proxies dockerd's HTTPS pulls" "$USERDATA" '"HTTPS_PROXY=http://192.168.122.1:3128"'
 teardown
 
+echo "vm-new: locks down egress by default, routing HTTP(S) through the proxy"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.30
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$("$SCRIPT" lockedvm 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_contains "points apt at the proxy" "$USERDATA" "/etc/apt/apt.conf.d/95proxy"
+assert_contains "sets the proxy in /etc/environment" "$USERDATA" "      https_proxy=http://192.168.122.1:3128"
+assert_contains "uses the proxy for the runcmd downloads" "$USERDATA" "  - export http_proxy=http://192.168.122.1:3128"
+assert_not_contains "doesn't warn about an open network" "$OUT" "--open-network"
+teardown
+
+echo "vm-new: --open-network skips the lockdown and the proxy, but keeps VMs apart"
+setup
+export STUB_DOMIFADDR_IP=203.0.113.31
+export STUB_USERDATA=$SANDBOX/user-data.rendered
+OUT=$("$SCRIPT" openvm --open-network 2>&1); STATUS=$?
+assert_eq "exits 0" 0 "$STATUS"
+LOG=$(cat "$STUB_LOG")
+assert_contains "attaches the open nwfilter" "$LOG" "filterref.filter=vm-egress-open"
+assert_not_contains "doesn't attach the lockdown nwfilter" "$LOG" "vm-egress-lockdown"
+USERDATA=$(cat "$STUB_USERDATA")
+assert_not_contains "configures no proxy anywhere" "$USERDATA" "3128"
+assert_contains "still sets COMPOSER_HOME" "$USERDATA" "      COMPOSER_HOME=/home/dev/.config/composer"
+assert_contains "still installs Claude Code" "$USERDATA" "claude.ai/install.sh"
+assert_contains "says the VM is open" "$OUT" "--open-network"
+teardown
+
 echo "vm-new: times out cleanly if the VM never gets an IP"
 setup
 OUT=$("$SCRIPT" noip 2>&1); STATUS=$?

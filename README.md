@@ -43,6 +43,12 @@ real enforcement point is the **host**, which the guest can't see or modify:
   (`http_proxy`/`https_proxy` in `/etc/environment`, `/etc/apt/apt.conf.d/95proxy`)
   to use that proxy — this is set up by `vm-new`'s cloud-init, not by the
   nwfilter, so a VM created before this existed needs it added by hand.
+- **Opting out per VM**: `vm-new <name> --open-network` attaches the
+  `vm-egress-open` nwfilter instead and sets up no proxy. The VM can reach any
+  internet host directly, so a hostile process inside it can too: use it for
+  VMs whose work the allowlist keeps getting in the way of, not for untrusted
+  code. That filter still blocks traffic to other VMs and the host on
+  `192.168.122.0/24` (except DNS), since every VM holds its own credentials.
 - **This is a backstop, not a substitute for per-project containment.** A
   project running something like a web server as its own dedicated low-priv
   system user (see `example-project`'s `vm-notes/` for a worked
@@ -121,6 +127,7 @@ ansible-playbook site.yml -K --tags squid
 ```sh
 vm-new myproject              # create a VM (options: --mem MB --vcpus N --disk SIZE)
 vm-new ai --copy-repos ~/repos  # ...and copy every repo under ~/repos into it
+vm-new scratch --open-network # no egress lockdown/proxy (VMs still isolated from each other)
 ssh myproject                 # or connect VSCode via Remote-SSH to host "myproject"
 vm-keys myproject             # print the VM's own SSH/GPG public keys, to add on GitHub
 vm-copy-repos myproject ~/repos  # copy repos into an existing VM (skips ones already there)

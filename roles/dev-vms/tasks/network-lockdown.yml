@@ -73,8 +73,13 @@
   when: dev_vms_fw_port.changed
   tags: system
 
-- name: Define the vm-egress-lockdown nwfilter
+# vm-egress-open is the opt-out for `vm-new --open-network`: direct internet access, no
+# proxy, but still no traffic between VMs.
+- name: Define the dev VM nwfilters
   ansible.builtin.command:
-    cmd: virsh -c qemu:///system nwfilter-define {{ role_path }}/files/network-lockdown/vm-egress-lockdown.xml
+    cmd: virsh -c qemu:///system nwfilter-define {{ role_path }}/files/network-lockdown/{{ item }}.xml
+  loop:
+    - vm-egress-lockdown
+    - vm-egress-open
   changed_when: true
   tags: user

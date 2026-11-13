@@ -1,0 +1,43 @@
+<filter name='vm-egress-open' chain='root'>
+  <uuid>3f0c9b6e-5d21-4a8e-9c47-1e2b7d6a4f10</uuid>
+  <!-- For VMs created with `vm-new --open-network`: unrestricted internet egress, no squid
+       proxy, but still no lateral movement to other VMs on virbr0 (each VM holds its own
+       repo PAT and keys). The DHCP, return-traffic and lateral-block rules are copied from
+       vm-egress-lockdown.xml; see the comments there for why each one is needed. -->
+  <filterref filter='clean-traffic'/>
+  <filterref filter='allow-dhcp'/>
+  <rule action='accept' direction='out' priority='60'>
+    <udp srcportstart='68' dstportstart='67'/>
+  </rule>
+
+  <rule action='accept' direction='out' priority='50'>
+    <tcp state='ESTABLISHED,RELATED'/>
+  </rule>
+  <rule action='accept' direction='out' priority='50'>
+    <udp state='ESTABLISHED,RELATED'/>
+  </rule>
+  <rule action='accept' direction='out' priority='50'>
+    <icmp state='ESTABLISHED,RELATED'/>
+  </rule>
+
+  <!-- DNS to the libvirt gateway; must come before the segment drop below. -->
+  <rule action='accept' direction='out' priority='100'>
+    <udp dstportstart='53' dstipaddr='192.168.122.1'/>
+  </rule>
+  <rule action='accept' direction='out' priority='100'>
+    <tcp dstportstart='53' dstipaddr='192.168.122.1'/>
+  </rule>
+
+  <!-- No traffic to other VMs (or the host) on 192.168.122.0/24. -->
+  <rule action='drop' direction='out' priority='200'>
+    <ip dstipaddr='192.168.122.0' dstipmask='255.255.255.0'/>
+  </rule>
+  <rule action='drop' direction='out' priority='200'>
+    <icmp dstipaddr='192.168.122.0' dstipmask='255.255.255.0'/>
+  </rule>
+
+  <!-- Everything else, i.e. the internet, is allowed. -->
+  <rule action='accept' direction='out' priority='300'>
+    <all/>
+  </rule>
+</filter>

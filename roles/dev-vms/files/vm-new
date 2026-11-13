@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   echo "usage: vm-new <name> [--mem MB] [--vcpus N] [--disk SIZE] [--nested]" >&2
   echo "                     [--repo URL] [--github-token-file PATH] [--copy-repos DIR]" >&2
+  echo "                     [--open-network]" >&2
   exit 1
 }
 
@@ -18,6 +19,7 @@ NESTED=0
 REPO=
 TOKEN_FILE=
 COPY_REPOS=
+OPEN_NETWORK=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mem) MEM=$2; shift 2 ;;
@@ -32,6 +34,9 @@ while [[ $# -gt 0 ]]; do
     --github-token-file) TOKEN_FILE=$2; shift 2 ;;
     # Once the VM is up, copy every git repo under DIR into it via vm-copy-repos.
     --copy-repos) COPY_REPOS=$2; shift 2 ;;
+    # Skip the egress lockdown: direct internet access, no squid allowlist.
+    # Traffic to other VMs stays blocked (vm-egress-open nwfilter).
+    --open-network) OPEN_NETWORK=1; shift ;;
     *) usage ;;
   esac
 done
@@ -53,6 +58,13 @@ SEED_PATH=$POOL/$NAME-seed.iso
 [[ -e $DISK_PATH ]] && { echo "VM disk $DISK_PATH already exists" >&2; exit 1; }
 [[ $CLAUDE_CLEANUP_DAYS =~ ^[0-9]+$ ]] || { echo "VM_CLAUDE_CLEANUP_DAYS must be a whole number of days" >&2; exit 1; }
 [[ -z $COPY_REPOS || -d $COPY_REPOS ]] || { echo "--copy-repos: no such directory: $COPY_REPOS" >&2; exit 1; }
+
+if [[ $OPEN_NETWORK == 1 ]]; then
+  NWFILTER=vm-egress-open
+  echo "note: --open-network: this VM can reach any internet host directly; only traffic to other VMs is blocked" >&2
+else
+  NWFILTER=vm-egress-lockdown
+fi
 
 # The VM commits as you, but with its own SSH key and GPG signing key generated
 # inside it on first boot (see vm-git-setup below), so nothing on the host has
@@ -114,10 +126,21 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - $(cat "$KEY.pub")
-# The nwfilter attached below blocks direct internet HTTP/HTTPS — everything must go through
-# the host's squid proxy instead. write_files runs before package_update/packages/runcmd, so
-# apt (and the nodesource curl step) can already reach it.
 write_files:
+  - path: /etc/environment
+    append: true
+    content: |
+      # asdf-php points an unset COMPOSER_HOME into the PHP install, which would
+      # hide the auth.json copied here and lose it on every PHP upgrade. Set here
+      # rather than in a profile script so non-interactive ssh commands get it too.
+      COMPOSER_HOME=/home/dev/.config/composer
+EOF
+
+# The vm-egress-lockdown nwfilter attached below blocks direct internet HTTP/HTTPS —
+# everything must go through the host's squid proxy instead. write_files runs before
+# package_update/packages/runcmd, so apt (and the nodesource curl step) can already reach it.
+if [[ $OPEN_NETWORK == 0 ]]; then
+  cat >> "$WORK/user-data" <<EOF
   - path: /etc/apt/apt.conf.d/95proxy
     content: |
       Acquire::http::Proxy "http://192.168.122.1:3128";
@@ -130,10 +153,6 @@ write_files:
       HTTP_PROXY=http://192.168.122.1:3128
       HTTPS_PROXY=http://192.168.122.1:3128
       no_proxy=localhost,127.0.0.1
-      # asdf-php points an unset COMPOSER_HOME into the PHP install, which would
-      # hide the auth.json copied here and lose it on every PHP upgrade. Set here
-      # rather than in a profile script so non-interactive ssh commands get it too.
-      COMPOSER_HOME=/home/dev/.config/composer
   # dockerd is a systemd service, so it sees neither /etc/environment nor apt's
   # proxy; without this, image pulls hit the nwfilter directly and fail.
   - path: /etc/systemd/system/docker.service.d/http-proxy.conf
@@ -141,6 +160,7 @@ write_files:
       [Service]
       Environment="HTTP_PROXY=http://192.168.122.1:3128" "HTTPS_PROXY=http://192.168.122.1:3128" "NO_PROXY=localhost,127.0.0.1"
 EOF
+fi
 
 # asdf manages the per-project node/php versions (.tool-versions).
 cat >> "$WORK/user-data" <<'EOF'
@@ -287,7 +307,13 @@ runcmd:
   - chown -R dev:dev /home/dev/.claude
   - usermod -aG docker dev
   - su - dev -c vm-git-setup
+EOF
+
+[[ $OPEN_NETWORK == 0 ]] && cat >> "$WORK/user-data" <<EOF
   - export http_proxy=http://192.168.122.1:3128 https_proxy=http://192.168.122.1:3128
+EOF
+
+cat >> "$WORK/user-data" <<EOF
   - curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -
   - apt-get install -y nodejs
   # Native installer as dev, into ~/.local, so Claude can update itself; an
@@ -342,7 +368,7 @@ virt-install \
   --osinfo detect=on,require=off \
   --boot uefi \
   --import \
-  --network network=default,model=virtio,filterref.filter=vm-egress-lockdown \
+  --network network=default,model=virtio,filterref.filter="$NWFILTER" \
   --graphics none \
   --noautoconsole
 
