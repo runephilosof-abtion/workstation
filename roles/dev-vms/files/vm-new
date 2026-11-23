@@ -277,15 +277,21 @@ packages:
   - curl
   - ca-certificates
   - build-essential
-  # asdf-php compiles PHP from source
+  # asdf-php compiles PHP from source. Its preflight check (lib/
+  # dependencies_and_flag_check.py) aborts if any of its prerequisites is
+  # missing; libsodium and gmp are optional, but without them PHP silently
+  # lacks the sodium and gmp extensions.
   - autoconf
   - bison
   - re2c
   - pkg-config
   - plocate
+  - bzip2
+  - libbz2-dev
   - libcurl4-openssl-dev
   - libedit-dev
   - libgd-dev
+  - libgmp-dev
   - libicu-dev
   - libjpeg-dev
   - default-libmysqlclient-dev
@@ -293,9 +299,12 @@ packages:
   - libpng-dev
   - libpq-dev
   - libreadline-dev
+  - libsodium-dev
   - libsqlite3-dev
   - libssl-dev
+  - libtidy-dev
   - libxml2-dev
+  - libxslt1-dev
   - libzip-dev
   - zlib1g-dev
   # Debian's docker-compose also ships the "docker compose" CLI plugin.
