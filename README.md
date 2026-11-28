@@ -355,8 +355,9 @@ tests/run-integration-in-vm.sh
 Real, unstubbed integration test: provisions the actual dev-vms role (real
 libvirt/KVM, real squid+nwfilter) inside a *nested* throwaway VM
 (`vm-new --nested`, needing host CPU/kernel support for nested
-virtualization), then runs the real `vm-new`/`vm-dispose` against it —
-booting and disposing an actual inner VM, not stub argument shapes. The
+virtualization), then runs `tests/run-integration.sh` in it: the real
+`vm-new`/`vm-dispose`, booting and disposing an actual inner VM, not stub
+argument shapes. The
 template image is seeded from the host's own cached copy (with a checksum
 computed from that same copy) rather than downloaded again, since the real
 download redirects to whichever Debian mirror it picks, which the squid
@@ -364,3 +365,14 @@ allowlist can't practically enumerate in advance. Slow (10+ minutes: nested
 boot, full package install, an actual inner VM boot) and heavier (two levels
 of VM) — for validating real libvirt/virsh behavior before trusting a change
 to `vm-new`/`vm-dispose`/`vm-ip` themselves, not for routine iteration.
+
+### CI
+
+GitHub Actions runs `tests/run.sh` on every push to `main` and on pull
+requests (`.github/workflows/tests.yml`). A second workflow
+(`integration.yml`) runs `tests/run-integration.sh` when the roles, the
+playbook or that script change, or when started by hand. A runner is a
+throwaway VM with KVM, so `site.yml` is provisioned straight onto it and the
+real `vm-new`/`vm-dispose` run there, without the nested outer VM. (With the
+outer VM the inner one is three levels deep on a runner, and takes longer to
+get an address than `vm-new` waits.)

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Real, unstubbed integration test: provisions the actual dev-vms Ansible role
 # (real libvirt/KVM, real squid+nwfilter, a real downloaded template) inside a
-# nested throwaway VM, then runs the real vm-new/vm-dispose against it end to
-# end -- not stub argument shapes. Never touches the host's own libvirt.
+# nested throwaway VM, then runs tests/run-integration.sh in there: the real
+# vm-new/vm-dispose end to end -- not stub argument shapes. Never touches the
+# host's own libvirt.
 #
 # Slow (nested boot + full package install + a real ~600MB template download +
 # an actual inner VM boot, likely 10+ minutes) and heavier (two levels of VM,
@@ -88,27 +89,7 @@ ssh "$VM" 'cd ~/workstation && LC_ALL=C.UTF-8 LANG=C.UTF-8 ansible-playbook site
 echo "Confirming nested KVM is actually available inside '$VM'..."
 ssh "$VM" 'test -e /dev/kvm' || { echo "no /dev/kvm inside '$VM' -- nested virt isn't working" >&2; exit 1; }
 
-INNER=integtest
-# PATH=...: a non-interactive, non-login ssh command doesn't source ~/.profile, which is
-# where ~/.local/bin (where the role installs vm-new/vm-dispose) normally gets added.
-BIN='PATH=$HOME/.local/bin:$PATH'
-echo "Running the real vm-new inside '$VM'..."
-ssh "$VM" "$BIN vm-new $INNER --mem 1024 --vcpus 1 --disk 5G"
-
-echo "Verifying the inner VM is real (listed in libvirt, reachable over SSH)..."
-ssh "$VM" "virsh --connect qemu:///system list --name | grep -qx $INNER"
-# vm-new only waits for a DHCP lease, not for sshd inside the guest to finish starting.
-ssh "$VM" "for _ in \$(seq 30); do ssh -o ConnectTimeout=2 -o BatchMode=yes $INNER true 2>/dev/null && exit 0; sleep 2; done; exit 1"
-echo "  ok - inner VM is defined in libvirt and reachable over SSH"
-
-echo "Running the real vm-dispose inside '$VM'..."
-ssh "$VM" "$BIN vm-dispose $INNER"
-
-echo "Verifying vm-dispose actually cleaned up the inner VM..."
-ssh "$VM" "! virsh --connect qemu:///system list --all --name | grep -qx $INNER"
-ssh "$VM" "test ! -f /var/lib/libvirt/images/dev-vms/$INNER.qcow2"
-ssh "$VM" "test ! -f /var/log/libvirt/qemu/$INNER.log"
-ssh "$VM" "test ! -f \$HOME/.ssh/dev-vms.d/$INNER.conf"
-echo "  ok - domain, disk, qemu log, and ssh config are all gone"
+echo "Running the real vm-new/vm-dispose checks inside '$VM'..."
+ssh "$VM" 'cd ~/workstation && tests/run-integration.sh'
 
 echo "All integration checks passed."

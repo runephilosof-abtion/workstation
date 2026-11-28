@@ -1,0 +1,54 @@
+name: Integration
+
+# Boots a real VM, so it only runs when something it exercises changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - roles/**
+      - site.yml
+      - ansible.cfg
+      - inventory.ini
+      - tests/run-integration.sh
+      - .github/workflows/integration.yml
+  pull_request:
+    paths:
+      - roles/**
+      - site.yml
+      - ansible.cfg
+      - inventory.ini
+      - tests/run-integration.sh
+      - .github/workflows/integration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    # The runner is itself a throwaway VM with KVM, so the role is provisioned
+    # straight onto it instead of into the nested VM that
+    # tests/run-integration-in-vm.sh builds on a workstation.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install what the role expects a workstation to have
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq firewalld libvirt-daemon-system libvirt-clients
+          sudo systemctl enable --now firewalld libvirtd
+          sudo usermod -aG libvirt,kvm "$USER"
+          sudo loginctl enable-linger "$USER"
+          git config --global user.name CI
+          git config --global user.email ci@example.com
+      # sudo -u: a fresh login, so the libvirt group membership added above applies.
+      - name: Provision the runner with site.yml
+        run: >-
+          sudo -u "$USER" env "PATH=$PATH" LC_ALL=C.UTF-8
+          "XDG_RUNTIME_DIR=/run/user/$(id -u)"
+          ansible-playbook site.yml
+      - name: Run the real vm-new and vm-dispose
+        run: sudo -u "$USER" tests/run-integration.sh
