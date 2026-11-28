@@ -1,0 +1,6 @@
+[Unit]
+Description=Record the open Claude Code sessions and their terminal layout
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/claude-sessions snapshot

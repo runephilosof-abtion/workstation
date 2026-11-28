@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake gnome-terminal: records its argv, opens no window.
+[[ -n ${STUB_LOG:-} ]] && printf 'gnome-terminal %s\n' "$*" >> "$STUB_LOG"
+exit 0

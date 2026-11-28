@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Print gnome-terminal's windows and the titles of their tabs, as JSON.
+
+  {"windows": [["title of tab 1", "title of tab 2"], ["title"]]}
+
+gnome-terminal has no D-Bus call that tells which tab sits in which window, so
+this reads the accessibility tree, the one place where the grouping shows.
+"""
+import json
+import sys
+
+import gi
+
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi  # noqa: E402
+
+
+def find(node, role, depth=6):
+    found = []
+    for index in range(node.get_child_count()):
+        child = node.get_child_at_index(index)
+        if child is None:
+            continue
+        if child.get_role() == role:
+            found.append(child)
+        elif depth > 1:
+            found += find(child, role, depth - 1)
+    return found
+
+
+def main():
+    desktop = Atspi.get_desktop(0)
+    windows = []
+    for index in range(desktop.get_child_count()):
+        app = desktop.get_child_at_index(index)
+        if app is None or app.get_name() != "gnome-terminal-server":
+            continue
+        for frame in find(app, Atspi.Role.FRAME, depth=1):
+            tabs = [
+                tab.get_name() or ""
+                for tab_list in find(frame, Atspi.Role.PAGE_TAB_LIST)
+                for tab in find(tab_list, Atspi.Role.PAGE_TAB, depth=1)
+            ]
+            # A window with one tab hides its tab bar and leaves the tab unnamed.
+            if len(tabs) == 1 and not tabs[0]:
+                tabs = [frame.get_name() or ""]
+            if tabs:
+                windows.append(tabs)
+    json.dump({"windows": windows}, sys.stdout)
+    print()
+
+
+if __name__ == "__main__":
+    main()

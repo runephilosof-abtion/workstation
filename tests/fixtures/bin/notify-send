@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Fake notify-send: records its argv and answers with $STUB_NOTIFY_ACTION, the
+# name of the button "pressed" (empty: the notification was dismissed).
+[[ -n ${STUB_LOG:-} ]] && printf 'notify-send %s\n' "$*" >> "$STUB_LOG"
+[[ -n ${STUB_NOTIFY_ACTION:-} ]] && echo "$STUB_NOTIFY_ACTION"
+exit 0

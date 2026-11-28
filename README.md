@@ -261,6 +261,43 @@ no proxy settings, so a `docker build` step that downloads something needs
 
 Push to a branch from inside the VM; fetch and review on the host.
 
+## Claude Code sessions across reboots
+
+A reboot, logout or desktop crash closes every terminal tab and the Claude Code
+session in it. `claude-sessions` (installed by the `claude-code` role) brings
+them back the way a browser restores its tabs:
+
+- A systemd user timer runs `claude-sessions snapshot` every minute. It records
+  each interactive session running in gnome-terminal and which window and tab
+  it is in, under `~/.local/state/claude-sessions/`.
+- At the next login a notification offers to restore them; **Restore** opens
+  the same windows with the same tabs, each running `claude --resume <id>` in
+  the directory the session was started in. It is offered once per snapshot.
+- `claude-sessions restore` does the same from a terminal at any time (it
+  lists what it will open and asks first; `--yes` skips the question).
+  Sessions that are already open again are skipped, so it is safe to run after
+  reopening a few by hand. `claude-sessions list` shows the last 20 snapshots,
+  and `claude-sessions restore <name>` restores an older one.
+
+What counts as "before": a snapshot becomes restorable when its
+gnome-terminal-server process is gone, which is what a reboot, logout or crash
+has in common. A session you close while the terminal keeps running drops out
+of the next snapshot and does not come back. Closing the last terminal window
+with sessions still in it counts like a crash.
+
+Limits:
+
+- A session is back at its last saved message; one that was working when the
+  terminal died has to be told to continue.
+- A tab is matched to its session by title, the only thing gnome-terminal
+  exposes about a tab (through the accessibility tree: it has no D-Bus call
+  for this). A session whose tab is not found, such as a new one that has no
+  title yet, is restored as a tab of one extra window.
+- Only Claude sessions are restored: plain shell tabs, window positions and
+  workspaces are not.
+- Up to a minute of changes (a session started, a tab dragged to another
+  window) can be missing from the last snapshot.
+
 ## Layout
 
 - `site.yml` — entry point; add future roles (packages, dotfiles, …) here
@@ -270,6 +307,8 @@ Push to a branch from inside the VM; fetch and review on the host.
 - `roles/claude-code/` — host Claude Code settings: sets `cleanupPeriodDays`
   (`claude_code_cleanup_period_days`, default 90) in `~/.claude/settings.json`,
   leaving the file's other settings alone
+  — and `claude-sessions`, its accessibility helper `claude-sessions-layout`
+  and the systemd user units that run them (see above)
 - `tests/` — test suite for those scripts (see below)
 
 Paths (template dir, VM pool dir, SSH key) are defined in
@@ -293,6 +332,11 @@ never touched. Each stub logs its argv to `$STUB_LOG` so tests can assert
 exactly what a script passed it (e.g. that a domain name goes through
 `--domain` rather than positionally, where virsh would parse a flag-like name
 as its own option instead of a domain).
+
+`test_claude_sessions.sh` covers `claude-sessions` the same way: processes are
+described by files in a fake `/proc` (`CLAUDE_SESSIONS_PROC`), and
+`gnome-terminal`, `notify-send` and the layout helper are stubs, so no window
+or notification appears.
 
 ```sh
 tests/run-in-vm.sh

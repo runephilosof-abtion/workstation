@@ -1,0 +1,543 @@
+#!/usr/bin/env python3
+"""Record the Claude Code sessions open in gnome-terminal, and reopen them later.
+
+A reboot, logout or desktop crash closes every terminal tab, and with it every
+interactive Claude Code session. The conversations stay on disk; what is lost
+is which ones were open and how they were spread over windows and tabs.
+
+  claude-sessions snapshot   record the open sessions (run every minute by a timer)
+  claude-sessions restore    reopen the sessions from the last terminal that went away
+  claude-sessions list       show the snapshots that can be restored
+  claude-sessions offer      ask through a desktop notification, then restore (run at login)
+"""
+import argparse
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+STATE_DIR = (
+    Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+    / "claude-sessions"
+)
+CURRENT = STATE_DIR / "current.json"
+HISTORY = STATE_DIR / "history"
+LAST_OFFERED = STATE_DIR / "last-offered"
+HISTORY_KEEP = 20
+
+# Overridable so the tests can describe processes with plain files.
+PROC = Path(os.environ.get("CLAUDE_SESSIONS_PROC") or "/proc")
+
+# The kernel truncates process names to 15 characters.
+TERMINAL_SERVER_COMM = "gnome-terminal-"
+
+SESSION_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+SELF = str(Path(__file__).resolve())
+SERVICE_ONLY_ENV = {"INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MANAGERPID"}
+
+
+# --- processes ---------------------------------------------------------------
+
+
+def proc_stat(pid):
+    """(name, parent pid, start time) of a process, or None when it is gone."""
+    try:
+        raw = (PROC / str(pid) / "stat").read_text()
+    except OSError:
+        return None
+    name = raw[raw.index("(") + 1 : raw.rindex(")")]
+    fields = raw[raw.rindex(")") + 2 :].split()
+    return name, int(fields[1]), fields[19]
+
+
+def boot_id():
+    try:
+        return (PROC / "sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return ""
+
+
+def terminal_server_of(pid):
+    """The gnome-terminal-server a process runs under, as {pid, start}."""
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        stat = proc_stat(pid)
+        if stat is None:
+            return None
+        name, parent, start = stat
+        if name == TERMINAL_SERVER_COMM:
+            return {"pid": pid, "start": start}
+        pid = parent
+    return None
+
+
+def server_alive(snapshot):
+    server = snapshot["terminal_server"]
+    stat = proc_stat(server["pid"])
+    return (
+        snapshot.get("boot_id") == boot_id()
+        and stat is not None
+        and stat[2] == server["start"]
+    )
+
+
+# --- Claude Code's own records -----------------------------------------------
+
+
+def registered_sessions():
+    """Interactive sessions Claude Code lists in its registry and that still run."""
+    for path in sorted((CLAUDE_DIR / "sessions").glob("*.json")):
+        try:
+            entry = json.loads(path.read_text())
+            pid, session_id = int(entry["pid"]), entry["sessionId"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if entry.get("kind") != "interactive" or not SESSION_ID.fullmatch(session_id):
+            continue
+        stat = proc_stat(pid)
+        if stat is None or stat[2] != str(entry.get("procStart")):
+            continue
+        yield {
+            "session_id": session_id,
+            "pid": pid,
+            "cwd": entry.get("cwd"),
+            "name": entry.get("name"),
+        }
+
+
+def resuming_sessions(known_pids):
+    """`claude --resume <id>` processes that are not in the registry.
+
+    A resumed session only registers once its startup prompts are answered
+    (a large one asks whether to resume from a summary), so right after a
+    restore most sessions are visible only through their command line.
+    """
+    for entry in PROC.iterdir():
+        if not entry.name.isdigit() or int(entry.name) in known_pids:
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().decode(errors="replace").split("\0")
+        except OSError:
+            continue
+        if os.path.basename(argv[0]) != "claude":
+            continue
+        for flag, value in zip(argv, argv[1:]):
+            if flag in ("--resume", "-r") and SESSION_ID.fullmatch(value):
+                try:
+                    cwd = os.readlink(entry / "cwd")
+                except OSError:
+                    cwd = None
+                yield {
+                    "session_id": value,
+                    "pid": int(entry.name),
+                    "cwd": cwd,
+                    "name": None,
+                }
+                break
+
+
+def running_sessions():
+    sessions = list(registered_sessions())
+    seen = {s["session_id"] for s in sessions}
+    for session in resuming_sessions({s["pid"] for s in sessions}):
+        if session["session_id"] not in seen:
+            seen.add(session["session_id"])
+            sessions.append(session)
+    return sessions
+
+
+def transcript_of(session_id):
+    return next(iter((CLAUDE_DIR / "projects").glob(f"*/{session_id}.jsonl")), None)
+
+
+def last_entry(data, entry_type):
+    at = data.rfind(f'"type":"{entry_type}"'.encode())
+    if at < 0:
+        return {}
+    start = data.rfind(b"\n", 0, at) + 1
+    end = data.find(b"\n", at)
+    try:
+        return json.loads(data[start : end if end >= 0 else len(data)])
+    except ValueError:
+        return {}
+
+
+def describe(session):
+    """Add what the transcript knows: the titles the tab may carry, and the
+    directory the session was started in.
+
+    `claude --resume` looks a session up by its start directory, which differs
+    from the registry's cwd once the session has moved into a worktree.
+    """
+    titles = [session["name"]]
+    cwd = session["cwd"]
+    transcript = transcript_of(session["session_id"])
+    if transcript is not None:
+        try:
+            data = transcript.read_bytes()
+        except OSError:
+            data = b""
+        titles = [
+            last_entry(data, "custom-title").get("customTitle"),
+            last_entry(data, "ai-title").get("aiTitle"),
+        ] + titles
+        started_in = re.search(rb'"cwd":("(?:[^"\\]|\\.)*")', data)
+        if started_in:
+            cwd = json.loads(started_in.group(1))
+    titles = [t.strip() for t in titles if isinstance(t, str) and t.strip()]
+    return {
+        "session_id": session["session_id"],
+        "cwd": cwd,
+        "title": titles[0] if titles else session["session_id"],
+        "titles": titles,
+    }
+
+
+# --- terminal layout ---------------------------------------------------------
+
+
+def read_layout():
+    """Tab titles per gnome-terminal window; empty when they cannot be read."""
+    helper = shutil.which("claude-sessions-layout") or str(
+        Path(SELF).with_name("claude-sessions-layout")
+    )
+    try:
+        out = subprocess.run(
+            [helper], capture_output=True, text=True, timeout=15, check=True
+        ).stdout
+        return json.loads(out)["windows"]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return []
+
+
+def without_status_glyph(title):
+    # Claude Code starts the terminal title with a glyph that changes while it works.
+    return re.sub(r"^\W\s+", "", title).strip()
+
+
+def place(sessions, layout):
+    """Group sessions the way their tabs are grouped into windows.
+
+    A tab is recognised by its title, the only thing the terminal shows about
+    it. Sessions with the same title can swap places, which keeps the shape of
+    the layout; a session whose tab is not found ends up in `unplaced`.
+    """
+    free = [
+        (window, tab, without_status_glyph(title))
+        for window, tabs in enumerate(layout)
+        for tab, title in enumerate(tabs)
+    ]
+    slots, unplaced = {}, []
+    for session in sessions:
+        slot = next((f for f in free if f[2] in session["titles"]), None)
+        if slot is None:
+            unplaced.append(session)
+        else:
+            free.remove(slot)
+            slots[slot[:2]] = session
+    windows = {}
+    for window, tab in sorted(slots):
+        windows.setdefault(window, []).append(slots[(window, tab)])
+    return list(windows.values()), unplaced
+
+
+# --- snapshots ---------------------------------------------------------------
+
+
+def load(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def sessions_in(snapshot):
+    return [s for window in snapshot["windows"] for s in window] + snapshot["unplaced"]
+
+
+def archives():
+    return sorted(HISTORY.glob("*.json"))
+
+
+def rotate():
+    """Move the current snapshot to the history once its terminal is gone.
+
+    The terminal server dying is what separates "everything was closed for me"
+    from "I closed that session": sessions that end while it lives simply drop
+    out of the next snapshot.
+    """
+    current = load(CURRENT)
+    if current is None or server_alive(current):
+        return
+    if not sessions_in(current):
+        CURRENT.unlink()
+        return
+    HISTORY.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%dT%H%M%S", time.localtime(current["taken_at"]))
+    os.replace(CURRENT, HISTORY / f"{stamp}.json")
+    for old in archives()[:-HISTORY_KEEP]:
+        old.unlink()
+
+
+def cmd_snapshot(_args):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    # Read the sessions before judging the terminal: if it dies in between,
+    # the checks below see that and leave the last good snapshot alone.
+    candidates = []
+    for session in running_sessions():
+        server = terminal_server_of(session["pid"])
+        if server is not None:
+            candidates.append((server, session))
+    rotate()
+
+    current = load(CURRENT)
+    if current is not None:
+        server = current["terminal_server"]
+    elif candidates:
+        server = candidates[0][0]
+    else:
+        return 0
+    sessions = [describe(s) for srv, s in candidates if srv == server]
+
+    windows, unplaced = place(sessions, read_layout())
+    for _ in range(2):
+        if not unplaced:
+            break
+        time.sleep(0.3)
+        windows, unplaced = place(sessions, read_layout())
+
+    snapshot = {
+        "taken_at": int(time.time()),
+        "boot_id": boot_id(),
+        "terminal_server": server,
+        "windows": [[stored(s) for s in window] for window in windows],
+        "unplaced": [stored(s) for s in unplaced],
+    }
+    if not server_alive(snapshot):
+        return 0
+    scratch = CURRENT.with_suffix(".tmp")
+    scratch.write_text(json.dumps(snapshot, indent=2) + "\n")
+    os.replace(scratch, CURRENT)
+    return 0
+
+
+def stored(session):
+    return {key: session[key] for key in ("session_id", "cwd", "title")}
+
+
+# --- restoring ---------------------------------------------------------------
+
+
+def restorable(snapshot):
+    """Split a snapshot into windows to open and sessions to leave alone."""
+    running = {s["session_id"] for s in running_sessions()}
+    skipped = []
+
+    def usable(session):
+        if session["session_id"] in running:
+            reason = "already open"
+        elif not SESSION_ID.fullmatch(session["session_id"]):
+            reason = "not a session id"
+        elif not session["cwd"] or not os.path.isdir(session["cwd"]):
+            reason = f"{session['cwd']} no longer exists"
+        elif transcript_of(session["session_id"]) is None:
+            reason = "its transcript is gone"
+        else:
+            return True
+        skipped.append((session, reason))
+        return False
+
+    windows = [[s for s in window if usable(s)] for window in snapshot["windows"]]
+    windows.append([s for s in snapshot["unplaced"] if usable(s)])
+    return [w for w in windows if w], skipped
+
+
+def when(snapshot):
+    return time.strftime("%a %d %b %H:%M", time.localtime(snapshot["taken_at"]))
+
+
+def counts(windows):
+    sessions = sum(len(w) for w in windows)
+    return (
+        f"{sessions} session{'s' if sessions != 1 else ''} in "
+        f"{len(windows)} window{'s' if len(windows) != 1 else ''}"
+    )
+
+
+def open_windows(windows):
+    # gnome-terminal hands its own environment to the tab, so drop what systemd
+    # adds for the unit this may be running in.
+    env = {k: v for k, v in os.environ.items() if k not in SERVICE_ONLY_ENV}
+    for window in windows:
+        tabs = [arg for s in window for arg in (s["cwd"], s["session_id"])]
+        subprocess.run(
+            [
+                "gnome-terminal",
+                "--window",
+                f"--working-directory={window[0]['cwd']}",
+                "--",
+                SELF,
+                "_tab",
+                *tabs,
+            ],
+            env=env,
+            check=True,
+        )
+
+
+def cmd_tab(args):
+    """Runs inside a new terminal tab: open the next tab, then become the session.
+
+    Each tab opens its successor from inside the window, because that is the
+    only way to tell gnome-terminal which window a new tab belongs to.
+    """
+    (cwd, session_id), later = args.tabs[:2], args.tabs[2:]
+    if not SESSION_ID.fullmatch(session_id):
+        sys.exit(f"claude-sessions: not a session id: {session_id}")
+    if later:
+        subprocess.run(
+            [
+                "gnome-terminal",
+                "--tab",
+                f"--working-directory={later[0]}",
+                "--",
+                SELF,
+                "_tab",
+                *later,
+            ],
+            check=False,
+        )
+    # An interactive shell, so the session gets the same environment as one
+    # started by hand, and the tab stays usable after Claude exits.
+    shell = os.environ.get("SHELL") or pwd.getpwuid(os.getuid()).pw_shell
+    os.chdir(cwd)
+    os.execv(shell, [shell, "-ic", f"claude --resume {session_id}; exec {shell}"])
+
+
+def pick_snapshot(name):
+    rotate()
+    if name:
+        path = HISTORY / (name if name.endswith(".json") else f"{name}.json")
+    else:
+        path = next(iter(reversed(archives())), None)
+    snapshot = load(path) if path else None
+    return path, snapshot
+
+
+def cmd_restore(args):
+    path, snapshot = pick_snapshot(args.snapshot)
+    if snapshot is None:
+        print("No snapshot to restore." if args.snapshot is None else f"No such snapshot: {args.snapshot}")
+        return 0 if args.snapshot is None else 1
+    windows, skipped = restorable(snapshot)
+
+    print(f"Claude sessions open on {when(snapshot)}:")
+    for number, window in enumerate(windows, 1):
+        print(f"  window {number}")
+        for session in window:
+            print(f"    {session['title']}  ({session['cwd']})")
+    for session, reason in skipped:
+        print(f"  skipped: {session['title']} - {reason}")
+    if not windows:
+        print("Nothing to restore.")
+        return 0
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("Not a terminal: pass --yes to restore without asking.")
+            return 1
+        if input(f"Open {counts(windows)}? [Y/n] ").strip().lower() not in ("", "y", "yes"):
+            return 0
+    open_windows(windows)
+    return 0
+
+
+def cmd_list(_args):
+    rotate()
+    if not archives():
+        print("No snapshots.")
+    for path in reversed(archives()):
+        snapshot = load(path)
+        if snapshot:
+            windows = snapshot["windows"] + ([snapshot["unplaced"]] if snapshot["unplaced"] else [])
+            print(f"{path.stem}  {counts(windows)}")
+    return 0
+
+
+def notify(summary, body):
+    """Show a notification with a Restore button; True when it was pressed."""
+    for _ in range(5):
+        try:
+            result = subprocess.run(
+                [
+                    "notify-send",
+                    "--app-name=Claude Code",
+                    "--icon=utilities-terminal",
+                    "--action=restore=Restore",
+                    summary,
+                    body,
+                ],
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return False
+        if result.returncode == 0:
+            return result.stdout.strip() == "restore"
+        # At login the notification service may not be up yet.
+        time.sleep(3)
+    return False
+
+
+def cmd_offer(_args):
+    path, snapshot = pick_snapshot(None)
+    if snapshot is None:
+        return 0
+    try:
+        if LAST_OFFERED.read_text().strip() >= path.name:
+            return 0
+    except OSError:
+        pass
+    LAST_OFFERED.write_text(path.name + "\n")
+    windows, _ = restorable(snapshot)
+    if not windows:
+        return 0
+    if notify(
+        "Restore Claude sessions?",
+        f"{counts(windows)} were open on {when(snapshot)}.",
+    ):
+        # They may have reopened some by hand while the notification waited.
+        windows, _ = restorable(snapshot)
+        open_windows(windows)
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    commands = parser.add_subparsers(dest="command", required=True, metavar="command")
+    commands.add_parser("snapshot").set_defaults(run=cmd_snapshot)
+    restore = commands.add_parser("restore")
+    restore.add_argument("snapshot", nargs="?", help="a name from `claude-sessions list` (default: the latest)")
+    restore.add_argument("-y", "--yes", action="store_true", help="open the windows without asking")
+    restore.set_defaults(run=cmd_restore)
+    commands.add_parser("list").set_defaults(run=cmd_list)
+    commands.add_parser("offer").set_defaults(run=cmd_offer)
+    tab = commands.add_parser("_tab")
+    tab.add_argument("tabs", nargs="+")
+    tab.set_defaults(run=cmd_tab)
+    args = parser.parse_args()
+    return args.run(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

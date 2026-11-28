@@ -1,0 +1,12 @@
+[Unit]
+Description=Offer to reopen the Claude Code sessions from before the last logout
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+# Stays up until the notification is answered or dismissed.
+Type=exec
+ExecStart=%h/.local/bin/claude-sessions offer
+
+[Install]
+WantedBy=graphical-session.target

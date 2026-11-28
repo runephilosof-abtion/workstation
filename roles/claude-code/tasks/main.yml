@@ -36,3 +36,65 @@
     mode: "0600"
   when: claude_code_settings.cleanupPeriodDays | default(none) != claude_code_cleanup_period_days | int
   tags: user
+
+- name: Install what claude-sessions needs to read the terminal layout and notify
+  ansible.builtin.apt:
+    name:
+      - python3-gi
+      - gir1.2-atspi-2.0
+      - libnotify-bin
+    state: present
+  become: true
+  tags: system
+
+- name: Create user bin directory
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.local/bin"
+    state: directory
+    mode: "0755"
+  tags: [user, claude-sessions]
+
+- name: Install claude-sessions
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ ansible_env.HOME }}/.local/bin/{{ item }}"
+    mode: "0755"
+  loop:
+    - claude-sessions
+    - claude-sessions-layout
+  tags: [user, claude-sessions]
+
+- name: Create systemd user unit directory
+  ansible.builtin.file:
+    path: "{{ ansible_env.HOME }}/.config/systemd/user"
+    state: directory
+    mode: "0755"
+  tags: [user, claude-sessions]
+
+- name: Install claude-sessions systemd user units
+  ansible.builtin.copy:
+    src: "systemd/{{ item }}"
+    dest: "{{ ansible_env.HOME }}/.config/systemd/user/{{ item }}"
+    mode: "0644"
+  loop:
+    - claude-sessions-snapshot.service
+    - claude-sessions-snapshot.timer
+    - claude-sessions-offer.service
+  tags: [user, claude-sessions]
+
+- name: Record the open Claude Code sessions every minute
+  ansible.builtin.systemd_service:
+    name: claude-sessions-snapshot.timer
+    scope: user
+    daemon_reload: true
+    enabled: true
+    state: started
+  tags: [user, claude-sessions]
+
+# Enabled but not started: it runs at the next login, when there is something to offer.
+- name: Offer to restore Claude Code sessions at login
+  ansible.builtin.systemd_service:
+    name: claude-sessions-offer.service
+    scope: user
+    enabled: true
+  tags: [user, claude-sessions]

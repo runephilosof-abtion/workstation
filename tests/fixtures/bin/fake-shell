@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stands in for $SHELL in a restored tab: records its argv, starts nothing.
+[[ -n ${STUB_LOG:-} ]] && printf 'shell %s\n' "$*" >> "$STUB_LOG"
+exit 0

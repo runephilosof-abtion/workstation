@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake terminal layout: prints $STUB_LAYOUT (the JSON the real helper reads from
+# the accessibility tree), or fails like a desktop without one when it is unset.
+[[ -n ${STUB_LAYOUT:-} ]] || exit 1
+echo "$STUB_LAYOUT"
